@@ -1,6 +1,7 @@
 from functools import lru_cache
 
 from src.app.core.config import get_settings
+from src.app.domain.support.prompt_builder import SupportPromptBuilder
 from src.app.domain.support.service import SupportService
 from src.app.infrastructure.llm.openai_client import OpenAIClient
 from src.app.infrastructure.storage.conversation_store import ConversationStore
@@ -29,9 +30,16 @@ def get_openai_client() -> OpenAIClient:
     )
 
 
+@lru_cache
+def get_support_prompt_builder() -> SupportPromptBuilder:
+    """Return the support prompt builder."""
+    return SupportPromptBuilder()
+
+
 def get_support_service() -> SupportService:
     """Build the support service with its infrastructure dependencies."""
     return SupportService(
         conversation_store=get_conversation_store(),
         openai_client=get_openai_client(),
+        prompt_builder=get_support_prompt_builder(),
     )
