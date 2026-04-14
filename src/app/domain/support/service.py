@@ -3,10 +3,14 @@ from uuid import uuid4
 
 from src.app.api.schemas.chat import ChatRequest, ChatResponse
 from src.app.domain.support.models import ChatResult, ChatSession, ConversationTurn
+from src.app.infrastructure.storage.conversation_store import ConversationStore
 
 
 class SupportService:
     """Application service responsible for the chat request lifecycle."""
+
+    def __init__(self, conversation_store: ConversationStore) -> None:
+        self._conversation_store = conversation_store
 
     async def chat(self, request: ChatRequest) -> ChatResponse:
         """Process a chat request and return the assistant response."""
@@ -23,18 +27,19 @@ class SupportService:
         session = await self._load_session(request.session_id)
         messages = self._build_messages(session, request.message)
         response = await self._generate_response(messages)
-        await self._persist_conversation(session.session_id, request.message, response)
+        await self._persist_conversation(
+            session.session_id,
+            session.history,
+            request.message,
+            response,
+        )
         return ChatResult(session_id=session.session_id, response=response)
 
     async def _load_session(self, session_id: str | None) -> ChatSession:
-        """
-        Resolve the chat session and load any stored conversation history.
-
-        Storage is not wired yet, so this currently returns an empty history while
-        preserving the session lifecycle shape in the service layer.
-        """
+        """Resolve the chat session and load any stored conversation history."""
         resolved_session_id = session_id or str(uuid4())
-        return ChatSession(session_id=resolved_session_id)
+        history = self._conversation_store.load(resolved_session_id)
+        return ChatSession(session_id=resolved_session_id, history=history)
 
     def _build_messages(
         self,
@@ -63,12 +68,14 @@ class SupportService:
     async def _persist_conversation(
         self,
         session_id: str,
+        history: list[ConversationTurn],
         user_message: str,
         assistant_response: str,
     ) -> None:
-        """
-        Persist the updated conversation.
-
-        Storage integration will be added in a follow-up PR.
-        """
-        _ = (session_id, user_message, assistant_response)
+        """Persist the updated conversation."""
+        messages = [
+            *history,
+            ConversationTurn(role="user", content=user_message),
+            ConversationTurn(role="assistant", content=assistant_response),
+        ]
+        self._conversation_store.save(session_id, messages)

@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -10,6 +11,7 @@ class Settings(BaseSettings):
     app_name: str = Field(default="Support API")
     environment: str = Field(default="development")
     api_v1_prefix: str = Field(default="")
+    conversation_storage_dir: Path = Field(default=Path("data/conversations"))
 
     model_config = SettingsConfigDict(
         env_file=".env",
