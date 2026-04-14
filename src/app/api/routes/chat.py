@@ -1,18 +1,20 @@
 from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
 
 from src.app.api.schemas.chat import ChatRequest, ChatResponse
+from src.app.domain.support.service import SupportService
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+service = SupportService()
 
 
 @router.post("", response_model=ChatResponse)
 async def chat(payload: ChatRequest) -> ChatResponse:
-    """
-    Minimal placeholder chat endpoint.
+    """Handle the non-streaming chat endpoint."""
+    return await service.chat(payload)
 
-    This is intentionally not wired into the existing chat internals yet.
-    It only exists so the new package layout is functional.
-    """
-    return ChatResponse(
-        response=f"Chat endpoint is wired. Received message: {payload.message}"
-    )
+
+@router.post("/stream")
+async def stream_chat(payload: ChatRequest) -> StreamingResponse:
+    """Handle the streaming chat endpoint."""
+    return StreamingResponse(service.stream_chat(payload), media_type="text/plain")
