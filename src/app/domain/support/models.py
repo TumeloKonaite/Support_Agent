@@ -23,3 +23,19 @@ class ChatResult:
 
     session_id: str
     response: str
+
+
+@dataclass(slots=True)
+class PromptBuildInput:
+    """Domain input required to generate a support prompt."""
+
+    history: list[ConversationTurn] = field(default_factory=list)
+    user_message: str = ""
+
+
+@dataclass(slots=True)
+class PromptBuildResult:
+    """Structured prompt output produced by the support prompt builder."""
+
+    system_prompt: str
+    user_prompt: str

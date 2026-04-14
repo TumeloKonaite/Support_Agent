@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator
 
 from src.app.api.schemas.chat import ChatRequest
 from src.app.domain.support.models import ConversationTurn
+from src.app.domain.support.prompt_builder import SupportPromptBuilder
 from src.app.domain.support.service import SupportService
 from src.app.infrastructure.storage.conversation_store import ConversationStore
 
@@ -47,23 +48,25 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             }
         )
         client = RecordingOpenAIClient(response="assistant reply")
-        service = SupportService(conversation_store=store, openai_client=client)
+        service = SupportService(
+            conversation_store=store,
+            openai_client=client,
+            prompt_builder=SupportPromptBuilder(),
+        )
 
         response = await service.chat(
             ChatRequest(message="new question", session_id="session-1")
         )
 
         self.assertEqual(response.response, "assistant reply")
-        self.assertEqual(
-            client.complete_calls,
-            [
-                [
-                    ConversationTurn(role="user", content="older question"),
-                    ConversationTurn(role="assistant", content="older answer"),
-                    ConversationTurn(role="user", content="new question"),
-                ]
-            ],
-        )
+        self.assertEqual(len(client.complete_calls), 1)
+        sent_messages = client.complete_calls[0]
+        self.assertEqual(sent_messages[0].role, "system")
+        self.assertIn("business support assistant", sent_messages[0].content)
+        self.assertEqual(sent_messages[1].role, "user")
+        self.assertIn("User: older question", sent_messages[1].content)
+        self.assertIn("Assistant: older answer", sent_messages[1].content)
+        self.assertIn("Latest customer message:\nnew question", sent_messages[1].content)
         self.assertEqual(
             store.data["session-1"],
             [
@@ -77,11 +80,19 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_chat_creates_new_session_history_when_missing(self) -> None:
         store = InMemoryConversationStore()
         client = RecordingOpenAIClient(response="assistant reply")
-        service = SupportService(conversation_store=store, openai_client=client)
+        service = SupportService(
+            conversation_store=store,
+            openai_client=client,
+            prompt_builder=SupportPromptBuilder(),
+        )
 
         response = await service.chat(ChatRequest(message="hello", session_id="session-2"))
 
         self.assertEqual(response.response, "assistant reply")
+        self.assertIn(
+            "No previous conversation history.",
+            client.complete_calls[0][1].content,
+        )
         self.assertEqual(
             store.data["session-2"],
             [
@@ -93,7 +104,11 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_stream_chat_uses_streaming_client_and_persists_response(self) -> None:
         store = InMemoryConversationStore()
         client = RecordingOpenAIClient(response="stream reply")
-        service = SupportService(conversation_store=store, openai_client=client)
+        service = SupportService(
+            conversation_store=store,
+            openai_client=client,
+            prompt_builder=SupportPromptBuilder(),
+        )
 
         chunks = [
             chunk
@@ -106,10 +121,11 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             chunks,
             ["stream reply"],
         )
-        self.assertEqual(
-            client.stream_calls,
-            [[ConversationTurn(role="user", content="stream me")]],
-        )
+        self.assertEqual(len(client.stream_calls), 1)
+        sent_messages = client.stream_calls[0]
+        self.assertEqual(sent_messages[0].role, "system")
+        self.assertEqual(sent_messages[1].role, "user")
+        self.assertIn("Latest customer message:\nstream me", sent_messages[1].content)
         self.assertEqual(
             store.data["session-3"],
             [

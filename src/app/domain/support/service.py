@@ -2,7 +2,12 @@ from collections.abc import AsyncIterator
 from uuid import uuid4
 
 from src.app.api.schemas.chat import ChatRequest, ChatResponse
-from src.app.domain.support.models import ChatSession, ConversationTurn
+from src.app.domain.support.models import (
+    ChatSession,
+    ConversationTurn,
+    PromptBuildInput,
+)
+from src.app.domain.support.prompt_builder import SupportPromptBuilder
 from src.app.infrastructure.llm.openai_client import LLMClient
 from src.app.infrastructure.storage.conversation_store import ConversationStore
 
@@ -14,9 +19,11 @@ class SupportService:
         self,
         conversation_store: ConversationStore,
         openai_client: LLMClient,
+        prompt_builder: SupportPromptBuilder,
     ) -> None:
         self._conversation_store = conversation_store
         self._openai_client = openai_client
+        self._prompt_builder = prompt_builder
 
     async def chat(self, request: ChatRequest) -> ChatResponse:
         """Process a chat request and return the assistant response."""
@@ -60,9 +67,15 @@ class SupportService:
         user_message: str,
     ) -> list[ConversationTurn]:
         """Build the model input from stored history and the new user message."""
+        prompt = self._prompt_builder.build(
+            PromptBuildInput(
+                history=session.history,
+                user_message=user_message,
+            )
+        )
         return [
-            *session.history,
-            ConversationTurn(role="user", content=user_message),
+            ConversationTurn(role="system", content=prompt.system_prompt),
+            ConversationTurn(role="user", content=prompt.user_prompt),
         ]
 
     async def _persist_conversation(

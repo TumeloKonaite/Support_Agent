@@ -68,7 +68,10 @@ class OpenAIClientTests(unittest.IsolatedAsyncioTestCase):
         client._client = sdk_client
 
         response = await client.complete(
-            [ConversationTurn(role="user", content="How are you?")]
+            [
+                ConversationTurn(role="system", content="You are support."),
+                ConversationTurn(role="user", content="How are you?"),
+            ]
         )
 
         self.assertEqual(response, "Hello world")
@@ -78,6 +81,11 @@ class OpenAIClientTests(unittest.IsolatedAsyncioTestCase):
                 {
                     "model": "gpt-test",
                     "input": [
+                        {
+                            "type": "message",
+                            "role": "system",
+                            "content": "You are support.",
+                        },
                         {
                             "type": "message",
                             "role": "user",
