@@ -1,7 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     environment: str = Field(default="development")
     api_v1_prefix: str = Field(default="")
     conversation_storage_dir: Path = Field(default=Path("data/conversations"))
+    openai_api_key: SecretStr | None = Field(default=None)
+    openai_model: str = Field(default="gpt-4.1-mini")
 
     model_config = SettingsConfigDict(
         env_file=".env",
