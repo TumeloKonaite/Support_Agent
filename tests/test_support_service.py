@@ -2,8 +2,17 @@ import unittest
 from collections.abc import AsyncIterator
 
 from src.app.api.schemas.chat import ChatRequest
-from src.app.domain.support.models import ConversationTurn
-from src.app.domain.support.prompt_builder import SupportPromptBuilder
+from src.app.domain.support.models import (
+    BusinessProfile,
+    ConversationTurn,
+    KnowledgeSection,
+    SupportKnowledge,
+)
+from src.app.domain.support.prompt_builder import (
+    BusinessProfileSource,
+    KnowledgeSource,
+    SupportPromptBuilder,
+)
 from src.app.domain.support.service import SupportService
 from src.app.infrastructure.storage.conversation_store import ConversationStore
 
@@ -37,7 +46,45 @@ class RecordingOpenAIClient:
         yield self.response
 
 
+class StaticBusinessProfileSource(BusinessProfileSource):
+    def __init__(self, profile: BusinessProfile) -> None:
+        self._profile = profile
+
+    def load(self, tenant_id: str | None = None) -> BusinessProfile:
+        return self._profile
+
+
+class StaticKnowledgeSource(KnowledgeSource):
+    def __init__(self, knowledge: SupportKnowledge) -> None:
+        self._knowledge = knowledge
+
+    def load(self, tenant_id: str | None = None) -> SupportKnowledge:
+        return self._knowledge
+
+
 class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
+    def _build_prompt_builder(self) -> SupportPromptBuilder:
+        return SupportPromptBuilder(
+            business_profile_source=StaticBusinessProfileSource(
+                BusinessProfile(
+                    business_name="Glow Studio",
+                    assistant_identity="the Glow Studio support assistant",
+                    escalation_target="Escalate refunds to the human care team.",
+                    tone_guidelines=("Be warm and practical.",),
+                )
+            ),
+            knowledge_source=StaticKnowledgeSource(
+                SupportKnowledge(
+                    sections=(
+                        KnowledgeSection(
+                            name="Policies",
+                            entries=("Escalate account access issues.",),
+                        ),
+                    )
+                )
+            )
+        )
+
     async def test_chat_uses_existing_history_and_persists_new_turns(self) -> None:
         store = InMemoryConversationStore(
             {
@@ -51,7 +98,7 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
         service = SupportService(
             conversation_store=store,
             openai_client=client,
-            prompt_builder=SupportPromptBuilder(),
+            prompt_builder=self._build_prompt_builder(),
         )
 
         response = await service.chat(
@@ -62,7 +109,7 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(client.complete_calls), 1)
         sent_messages = client.complete_calls[0]
         self.assertEqual(sent_messages[0].role, "system")
-        self.assertIn("business support assistant", sent_messages[0].content)
+        self.assertIn("Glow Studio", sent_messages[0].content)
         self.assertEqual(sent_messages[1].role, "user")
         self.assertIn("User: older question", sent_messages[1].content)
         self.assertIn("Assistant: older answer", sent_messages[1].content)
@@ -83,7 +130,7 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
         service = SupportService(
             conversation_store=store,
             openai_client=client,
-            prompt_builder=SupportPromptBuilder(),
+            prompt_builder=self._build_prompt_builder(),
         )
 
         response = await service.chat(ChatRequest(message="hello", session_id="session-2"))
@@ -107,7 +154,7 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
         service = SupportService(
             conversation_store=store,
             openai_client=client,
-            prompt_builder=SupportPromptBuilder(),
+            prompt_builder=self._build_prompt_builder(),
         )
 
         chunks = [

@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     app_name: str = Field(default="Support API")
     environment: str = Field(default="development")
     api_v1_prefix: str = Field(default="")
+    content_data_dir: Path = Field(default=Path("data"))
     conversation_storage_dir: Path = Field(default=Path("data/conversations"))
     openai_api_key: SecretStr | None = Field(default=None)
     openai_model: str = Field(default="gpt-4.1-mini")
