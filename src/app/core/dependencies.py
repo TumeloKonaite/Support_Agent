@@ -2,6 +2,7 @@ from functools import lru_cache
 
 from src.app.core.config import get_settings
 from src.app.domain.support.service import SupportService
+from src.app.infrastructure.llm.openai_client import OpenAIClient
 from src.app.infrastructure.storage.conversation_store import ConversationStore
 from src.app.infrastructure.storage.file_conversation_store import (
     FileConversationStore,
@@ -15,6 +16,22 @@ def get_conversation_store() -> ConversationStore:
     return FileConversationStore(settings.conversation_storage_dir)
 
 
+@lru_cache
+def get_openai_client() -> OpenAIClient:
+    """Return the configured OpenAI client."""
+    settings = get_settings()
+    if settings.openai_api_key is None:
+        raise ValueError("OPENAI_API_KEY must be configured to use chat endpoints")
+
+    return OpenAIClient(
+        api_key=settings.openai_api_key.get_secret_value(),
+        model=settings.openai_model,
+    )
+
+
 def get_support_service() -> SupportService:
     """Build the support service with its infrastructure dependencies."""
-    return SupportService(conversation_store=get_conversation_store())
+    return SupportService(
+        conversation_store=get_conversation_store(),
+        openai_client=get_openai_client(),
+    )
