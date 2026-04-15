@@ -1,30 +1,39 @@
 from functools import lru_cache
 
-from src.app.core.config import get_settings
-from src.app.domain.support.prompt_builder import SupportPromptBuilder
+from src.app.core.config import Settings, get_settings
+from src.app.domain.support.prompt_builder import (
+    BusinessProfileSource,
+    KnowledgeSource,
+    SupportPromptBuilder,
+)
 from src.app.domain.support.service import SupportService
 from src.app.infrastructure.content.business_profile_loader import (
     BusinessProfileLoader,
 )
 from src.app.infrastructure.content.knowledge_loader import KnowledgeLoader
-from src.app.infrastructure.llm.openai_client import OpenAIClient
+from src.app.infrastructure.llm.openai_client import LLMClient, OpenAIClient
 from src.app.infrastructure.storage.conversation_store import ConversationStore
 from src.app.infrastructure.storage.file_conversation_store import (
     FileConversationStore,
 )
 
 
+def get_config() -> Settings:
+    """Return the runtime application settings."""
+    return get_settings()
+
+
 @lru_cache
 def get_conversation_store() -> ConversationStore:
     """Return the configured conversation store implementation."""
-    settings = get_settings()
+    settings = get_config()
     return FileConversationStore(settings.conversation_storage_dir)
 
 
 @lru_cache
-def get_openai_client() -> OpenAIClient:
+def get_openai_client() -> LLMClient:
     """Return the configured OpenAI client."""
-    settings = get_settings()
+    settings = get_config()
     if settings.openai_api_key is None:
         raise ValueError("OPENAI_API_KEY must be configured to use chat endpoints")
 
@@ -35,12 +44,25 @@ def get_openai_client() -> OpenAIClient:
 
 
 @lru_cache
+def get_business_profile_loader() -> BusinessProfileSource:
+    """Return the configured business profile content source."""
+    settings = get_config()
+    return BusinessProfileLoader(settings.content_data_dir)
+
+
+@lru_cache
+def get_knowledge_loader() -> KnowledgeSource:
+    """Return the configured support knowledge content source."""
+    settings = get_config()
+    return KnowledgeLoader(settings.content_data_dir)
+
+
+@lru_cache
 def get_support_prompt_builder() -> SupportPromptBuilder:
     """Return the support prompt builder."""
-    settings = get_settings()
     return SupportPromptBuilder(
-        business_profile_source=BusinessProfileLoader(settings.content_data_dir),
-        knowledge_source=KnowledgeLoader(settings.content_data_dir),
+        business_profile_source=get_business_profile_loader(),
+        knowledge_source=get_knowledge_loader(),
     )
 
 
