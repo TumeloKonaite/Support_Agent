@@ -13,16 +13,20 @@ from src.app.domain.support.prompt_builder import SupportPromptBuilder
 class StaticBusinessProfileSource:
     def __init__(self, profile: BusinessProfile) -> None:
         self._profile = profile
+        self.tenant_ids: list[str | None] = []
 
     def load(self, tenant_id: str | None = None) -> BusinessProfile:
+        self.tenant_ids.append(tenant_id)
         return self._profile
 
 
 class StaticKnowledgeSource:
     def __init__(self, knowledge: SupportKnowledge) -> None:
         self._knowledge = knowledge
+        self.tenant_ids: list[str | None] = []
 
     def load(self, tenant_id: str | None = None) -> SupportKnowledge:
+        self.tenant_ids.append(tenant_id)
         return self._knowledge
 
 
@@ -97,3 +101,89 @@ class SupportPromptBuilderTests(unittest.TestCase):
         prompt = builder.build(PromptBuildInput(user_message="Hello"))
 
         self.assertIn("No previous conversation history.", prompt.user_prompt)
+
+    def test_build_passes_tenant_id_to_content_sources(self) -> None:
+        profile_source = StaticBusinessProfileSource(
+            BusinessProfile(
+                business_name="Glow Studio",
+                assistant_identity="the Glow Studio support assistant",
+            )
+        )
+        knowledge_source = StaticKnowledgeSource(SupportKnowledge())
+        builder = SupportPromptBuilder(
+            business_profile_source=profile_source,
+            knowledge_source=knowledge_source,
+        )
+
+        builder.build(PromptBuildInput(user_message="Hello", tenant_id="tenant-a"))
+
+        self.assertEqual(profile_source.tenant_ids, ["tenant-a"])
+        self.assertEqual(knowledge_source.tenant_ids, ["tenant-a"])
+
+    def test_build_omits_optional_sections_when_inputs_are_missing(self) -> None:
+        builder = SupportPromptBuilder(
+            business_profile_source=StaticBusinessProfileSource(
+                BusinessProfile(
+                    business_name="Bare Beauty",
+                    assistant_identity="the Bare Beauty assistant",
+                )
+            ),
+            knowledge_source=StaticKnowledgeSource(SupportKnowledge()),
+        )
+
+        prompt = builder.build(PromptBuildInput(user_message="Do you ship?"))
+
+        self.assertEqual(
+            prompt.system_prompt,
+            "You are the Bare Beauty assistant for Bare Beauty.",
+        )
+        self.assertNotIn("Support contacts:", prompt.system_prompt)
+        self.assertNotIn("Tone:", prompt.system_prompt)
+        self.assertNotIn("Business knowledge:", prompt.system_prompt)
+
+    def test_build_output_remains_stable_for_known_inputs(self) -> None:
+        builder = self._build_builder()
+
+        prompt = builder.build(
+            PromptBuildInput(
+                history=[
+                    ConversationTurn(role="user", content="Can I return this?"),
+                    ConversationTurn(role="assistant", content="What was opened?"),
+                ],
+                user_message="The serum box is sealed.",
+            )
+        )
+
+        self.assertEqual(
+            prompt.system_prompt,
+            "\n\n".join(
+                [
+                    "You are the Glow Studio support assistant for Glow Studio.\n"
+                    "Support hours: Weekdays 9 to 5\n"
+                    "Escalation path: Escalate refunds and account access requests to the care team.\n"
+                    "Business metadata:\n"
+                    "- Region: US",
+                    "Support contacts:\n"
+                    "- Email: support@glow.example\n"
+                    "- Phone: +1-555-0100",
+                    "Tone:\n"
+                    "- Be warm and practical.\n"
+                    "- Keep answers concise.",
+                    "Business knowledge:\n"
+                    "Policies:\n"
+                    "- Never invent refund approvals.\n"
+                    "- Escalate account changes to a human agent.\n\n"
+                    "FAQs:\n"
+                    "- Customers often ask about appointments.",
+                ]
+            ),
+        )
+        self.assertEqual(
+            prompt.user_prompt,
+            "Support conversation context:\n"
+            "User: Can I return this?\n"
+            "Assistant: What was opened?\n\n"
+            "Latest customer message:\n"
+            "The serum box is sealed.\n\n"
+            "Respond as the support assistant.",
+        )
