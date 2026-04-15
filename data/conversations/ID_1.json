@@ -1,0 +1,34 @@
+[
+  {
+    "role": "user",
+    "content": "Hi there"
+  },
+  {
+    "role": "assistant",
+    "content": "Hello! How can I assist you with your beauty support needs today?"
+  },
+  {
+    "role": "user",
+    "content": "What is the support call and email"
+  },
+  {
+    "role": "assistant",
+    "content": "You can reach Support Beauty by phone at +1-800-555-0130 or by email at support@supportbeauty.example. How can I assist you further today?"
+  },
+  {
+    "role": "user",
+    "content": "My name is Tumelo"
+  },
+  {
+    "role": "assistant",
+    "content": "Hello Tumelo! How can I assist you with your beauty support needs today?"
+  },
+  {
+    "role": "user",
+    "content": "What is my name?"
+  },
+  {
+    "role": "assistant",
+    "content": "Your name is Tumelo. How can I assist you further today?"
+  }
+]
