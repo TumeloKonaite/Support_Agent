@@ -2,9 +2,9 @@ from fastapi import FastAPI
 
 from src.app.api.routes.chat import router as chat_router
 from src.app.api.routes.health import router as health_router
-from src.app.core.config import get_settings
+from src.app.core.dependencies import get_config
 
-settings = get_settings()
+settings = get_config()
 
 app = FastAPI(title=settings.app_name)
 
