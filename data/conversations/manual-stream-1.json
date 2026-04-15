@@ -1,0 +1,10 @@
+[
+  {
+    "role": "user",
+    "content": "I need help with pricing and support hours."
+  },
+  {
+    "role": "assistant",
+    "content": "Hello! I'd be happy to help. Our support hours are Monday to Friday, 9:00 AM to 5:00 PM local business time. Could you please specify which product or service pricing you need help with?"
+  }
+]

@@ -1,0 +1,10 @@
+[
+  {
+    "role": "user",
+    "content": "Hello, can you tell me what services you offer?"
+  },
+  {
+    "role": "assistant",
+    "content": "Hello! At Support Beauty, we offer personalized beauty support services including product recommendations, skincare and makeup advice, and help with order and account questions. If you have a specific beauty concern or need assistance with your products, feel free to ask, and I'll be happy to help!"
+  }
+]
