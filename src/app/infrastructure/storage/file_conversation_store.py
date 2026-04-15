@@ -20,12 +20,18 @@ class FileConversationStore(ConversationStore):
         if not file_path.exists():
             return []
 
-        with file_path.open("r", encoding="utf-8") as file:
-            payload = json.load(file)
+        try:
+            with file_path.open("r", encoding="utf-8") as file:
+                payload = json.load(file)
+        except (json.JSONDecodeError, OSError):
+            return []
 
         return [
             ConversationTurn(role=message["role"], content=message["content"])
             for message in payload
+            if isinstance(message, dict)
+            and isinstance(message.get("role"), str)
+            and isinstance(message.get("content"), str)
         ]
 
     def save(self, session_id: str, messages: list[ConversationTurn]) -> None:

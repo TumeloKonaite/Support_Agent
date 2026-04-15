@@ -20,17 +20,28 @@ from src.app.infrastructure.storage.conversation_store import ConversationStore
 class InMemoryConversationStore(ConversationStore):
     def __init__(self, data: dict[str, list[ConversationTurn]] | None = None) -> None:
         self.data = data or {}
+        self.load_calls: list[str] = []
+        self.save_calls: list[tuple[str, list[ConversationTurn]]] = []
 
     def load(self, session_id: str) -> list[ConversationTurn]:
+        self.load_calls.append(session_id)
         return list(self.data.get(session_id, []))
 
     def save(self, session_id: str, messages: list[ConversationTurn]) -> None:
         self.data[session_id] = list(messages)
+        self.save_calls.append((session_id, list(messages)))
 
 
 class RecordingOpenAIClient:
-    def __init__(self, response: str = "default response") -> None:
+    def __init__(
+        self,
+        response: str = "default response",
+        stream_chunks: list[str] | None = None,
+        stream_error: Exception | None = None,
+    ) -> None:
         self.response = response
+        self.stream_chunks = stream_chunks
+        self.stream_error = stream_error
         self.complete_calls: list[list[ConversationTurn]] = []
         self.stream_calls: list[list[ConversationTurn]] = []
 
@@ -43,7 +54,11 @@ class RecordingOpenAIClient:
         messages: list[ConversationTurn],
     ) -> AsyncIterator[str]:
         self.stream_calls.append(list(messages))
-        yield self.response
+        for chunk in self.stream_chunks or [self.response]:
+            yield chunk
+
+        if self.stream_error is not None:
+            raise self.stream_error
 
 
 class StaticBusinessProfileSource(BusinessProfileSource):
@@ -148,9 +163,41 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_chat_generates_session_id_when_not_supplied(self) -> None:
+        store = InMemoryConversationStore()
+        client = RecordingOpenAIClient(response="assistant reply")
+        service = SupportService(
+            conversation_store=store,
+            openai_client=client,
+            prompt_builder=self._build_prompt_builder(),
+        )
+
+        response = await service.chat(ChatRequest(message="hello"))
+
+        self.assertEqual(response.response, "assistant reply")
+        self.assertEqual(len(store.load_calls), 1)
+        generated_session_id = store.load_calls[0]
+        self.assertTrue(generated_session_id)
+        self.assertEqual(set(store.data), {generated_session_id})
+        self.assertEqual(
+            store.save_calls,
+            [
+                (
+                    generated_session_id,
+                    [
+                        ConversationTurn(role="user", content="hello"),
+                        ConversationTurn(
+                            role="assistant",
+                            content="assistant reply",
+                        ),
+                    ],
+                )
+            ],
+        )
+
     async def test_stream_chat_uses_streaming_client_and_persists_response(self) -> None:
         store = InMemoryConversationStore()
-        client = RecordingOpenAIClient(response="stream reply")
+        client = RecordingOpenAIClient(stream_chunks=["stream ", "reply"])
         service = SupportService(
             conversation_store=store,
             openai_client=client,
@@ -166,7 +213,7 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             chunks,
-            ["stream reply"],
+            ["stream ", "reply"],
         )
         self.assertEqual(len(client.stream_calls), 1)
         sent_messages = client.stream_calls[0]
@@ -180,3 +227,52 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
                 ConversationTurn(role="assistant", content="stream reply"),
             ],
         )
+
+    async def test_stream_chat_preserves_partial_chunks_until_completion(self) -> None:
+        store = InMemoryConversationStore()
+        client = RecordingOpenAIClient(stream_chunks=["part", "ial", " response"])
+        service = SupportService(
+            conversation_store=store,
+            openai_client=client,
+            prompt_builder=self._build_prompt_builder(),
+        )
+
+        chunks = [
+            chunk
+            async for chunk in service.stream_chat(
+                ChatRequest(message="split it", session_id="session-4")
+            )
+        ]
+
+        self.assertEqual(chunks, ["part", "ial", " response"])
+        self.assertEqual(
+            store.data["session-4"],
+            [
+                ConversationTurn(role="user", content="split it"),
+                ConversationTurn(role="assistant", content="partial response"),
+            ],
+        )
+
+    async def test_stream_chat_propagates_errors_without_persisting_partial_output(
+        self,
+    ) -> None:
+        store = InMemoryConversationStore()
+        client = RecordingOpenAIClient(
+            stream_chunks=["partial"],
+            stream_error=RuntimeError("stream failed"),
+        )
+        service = SupportService(
+            conversation_store=store,
+            openai_client=client,
+            prompt_builder=self._build_prompt_builder(),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "stream failed"):
+            [
+                chunk
+                async for chunk in service.stream_chat(
+                    ChatRequest(message="fail please", session_id="session-5")
+                )
+            ]
+
+        self.assertNotIn("session-5", store.data)
