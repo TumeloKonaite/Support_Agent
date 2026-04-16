@@ -1,4 +1,4 @@
-# Support Agent
+# Support Agent Starter
 
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-ready-009688.svg)](https://fastapi.tiangolo.com/)
@@ -6,15 +6,16 @@
 [![Tests](https://img.shields.io/badge/tests-pytest-0A9EDC.svg)](https://docs.pytest.org/)
 [![License](https://img.shields.io/badge/license-not%20specified-lightgrey.svg)](#license)
 
-A small FastAPI customer-support assistant for a beauty business. The app loads business-managed JSON documents, builds a support prompt from those documents and conversation history, calls OpenAI, and stores chat transcripts on disk.
+A small FastAPI customer-support assistant starter that can be adapted for many kinds of businesses. The app loads business-managed JSON documents, builds a support prompt from those documents and conversation history, calls OpenAI, and stores chat transcripts on disk.
 
 ## Features
 
 - FastAPI app with health, chat, and streaming chat endpoints.
 - OpenAI Responses API integration through an isolated LLM client.
-- JSON-backed business profile and support knowledge files.
+- JSON-backed business profile and support knowledge files that are easy to customize.
 - File-backed conversation history by `session_id`.
 - Layered structure for API routes, domain logic, infrastructure, and tests.
+- Designed to be forked and retuned for a new business with minimal code changes.
 
 ## Project Structure
 
@@ -41,6 +42,10 @@ A small FastAPI customer-support assistant for a beauty business. The app loads 
 - `uv`
 - An OpenAI API key for the `/chat` endpoints
 
+## Who This Is For
+
+This repo is intended as a reusable starting point for anyone who wants a support agent tailored to their own business. Fork it, update the JSON content in `data/`, adjust the tone and policies, and you have a basic support API without needing to redesign the whole app.
+
 ## Setup
 
 Install dependencies:
@@ -61,6 +66,17 @@ CONVERSATION_STORAGE_DIR=data/conversations
 ```
 
 Only `OPENAI_API_KEY` is required for real chat responses. The other values have defaults and can be omitted.
+
+## Customizing For Your Business
+
+Most customization happens in the `data/` directory:
+
+- Update `data/business_profile.json` with your business name, support channels, operating hours, escalation rules, and tone.
+- Update `data/knowledge.json` with your policies, FAQs, services, product details, and handoff rules.
+- Keep the app code as-is if your needs fit the current API shape.
+- Extend the domain or API layers later if you want business-specific workflows.
+
+The goal is to let each fork keep the same support-agent foundation while swapping in business-specific content and behavior.
 
 ## Run The API
 
@@ -100,7 +116,7 @@ curl -N -X POST http://127.0.0.1:8000/chat/stream \
 
 ## Business Documents
 
-The assistant reads business content from the `data/` directory. These files are safe to edit when updating what the assistant knows about the business.
+The assistant reads business content from the `data/` directory. These files are intended to be edited in each fork so the agent reflects that business's identity, policies, and support knowledge.
 
 ### Business Profile
 
@@ -108,9 +124,9 @@ Edit `data/business_profile.json` for business identity and support operations:
 
 ```json
 {
-  "business_name": "Support Beauty",
-  "assistant_identity": "the Support Beauty customer support assistant",
-  "support_email": "support@supportbeauty.example",
+  "business_name": "Acme Support",
+  "assistant_identity": "the Acme customer support assistant",
+  "support_email": "support@acme.example",
   "support_phone": "+1-800-555-0130",
   "escalation_target": "Escalate account, refund, or policy exception requests to the human support team.",
   "support_hours": "Monday to Friday, 9:00 AM to 5:00 PM local business time.",
@@ -120,7 +136,7 @@ Edit `data/business_profile.json` for business identity and support operations:
   ],
   "metadata": {
     "primary_channel": "chat",
-    "industry": "beauty support"
+    "industry": "ecommerce support"
   }
 }
 ```
@@ -169,6 +185,9 @@ Useful section ideas:
 - `Returns`
 - `Escalation Rules`
 - `Brand Voice`
+- `Appointments`
+- `Billing`
+- `Account Help`
 
 ### Tenant-Specific Documents
 
@@ -255,6 +274,7 @@ The tests cover content loaders, prompt building, support policies, conversation
 ## Development Notes
 
 - Keep runtime business content in `data/business_profile.json` and `data/knowledge.json`.
+- Treat the JSON files in `data/` as the main customization layer for each fork.
 - Keep local secrets in `.env`; `.env` is ignored by Git.
 - Keep generated or test conversation transcripts in `data/conversations/`.
 - The app entry point for the API is `src.app.main:app`.
