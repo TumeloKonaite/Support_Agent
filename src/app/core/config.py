@@ -18,6 +18,14 @@ class Settings(BaseSettings):
     conversation_storage_dir: Path = Field(default=Path("data/conversations"))
     openai_api_key: SecretStr | None = Field(default=None)
     openai_model: str = Field(default="gpt-4.1-mini")
+    retrieval_embedding_provider: str = Field(default="hashing")
+    retrieval_embedding_model: str = Field(default="hashing-v1")
+    retrieval_top_k: int = Field(default=3, ge=1)
+    retrieval_chunk_size: int = Field(default=500, ge=1)
+    retrieval_chunk_overlap: int = Field(default=100, ge=0)
+    retrieval_vector_store_path: Path = Field(
+        default=Path("data/retrieval/vector_store.json")
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",
