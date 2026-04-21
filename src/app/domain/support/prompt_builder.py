@@ -6,6 +6,7 @@ from src.app.domain.support.models import (
     ConversationTurn,
     PromptBuildInput,
     PromptBuildResult,
+    SupportContextChunk,
     SupportKnowledge,
 )
 from src.app.domain.support.observability import (
@@ -75,6 +76,7 @@ class SupportPromptBuilder:
             ("contact", self._render_contact_section(business_profile)),
             ("tone", self._render_tone_section(business_profile)),
             ("knowledge", self._render_knowledge_sections(knowledge)),
+            ("grounding", self._render_grounding_section()),
         ]
         included_sections = [name for name, content in section_specs if content]
         return (
@@ -86,7 +88,7 @@ class SupportPromptBuilder:
         self,
         history: list[ConversationTurn],
         user_message: str,
-        retrieved_context: tuple[str, ...],
+        retrieved_context: tuple[SupportContextChunk, ...],
     ) -> tuple[str, list[str]]:
         history_text = self._render_history(history)
         sections = [
@@ -112,19 +114,36 @@ class SupportPromptBuilder:
 
         return "\n".join(f"{turn.role.title()}: {turn.content}" for turn in history)
 
-    def _render_retrieved_context(self, retrieved_context: tuple[str, ...]) -> str:
+    def _render_retrieved_context(
+        self,
+        retrieved_context: tuple[SupportContextChunk, ...],
+    ) -> str:
         if not retrieved_context:
             return ""
 
         max_items = 5
         max_item_length = 500
-        lines = ["Retrieved business context:"]
+        lines = [
+            "Retrieved business context:",
+            "Use only the context below for business facts. Cite every substantive claim with the matching bracket label.",
+        ]
         for item in retrieved_context[:max_items]:
-            normalized = " ".join(item.split())
+            normalized = " ".join(item.text.split())
             if len(normalized) > max_item_length:
                 normalized = normalized[: max_item_length - 3].rstrip() + "..."
-            lines.append(f"- {normalized}")
+            source_line = f" Source: {item.source}" if item.source else ""
+            lines.append(f"{item.label}{source_line}")
+            lines.append(normalized)
         return "\n".join(lines)
+
+    def _render_grounding_section(self) -> str:
+        return (
+            "Grounding rules:\n"
+            "- When retrieved business context is provided, answer only from that context.\n"
+            "- Do not use outside knowledge or infer missing policy details.\n"
+            "- If the context does not support the answer, say that you do not have enough information.\n"
+            "- Cite every substantive claim with bracket citations such as [1] or [2]."
+        )
 
     def _render_identity_section(self, business_profile: BusinessProfile) -> str:
         lines = [
@@ -206,7 +225,7 @@ class SupportPromptBuilder:
                 "included_retrieval_context": bool(prompt_input.retrieved_context),
                 "retrieved_chunk_count": len(prompt_input.retrieved_context),
                 "retrieved_context_size_chars": sum(
-                    len(item) for item in prompt_input.retrieved_context
+                    len(item.text) for item in prompt_input.retrieved_context
                 ),
                 "history_turn_count": len(prompt_input.history),
                 "system_prompt_size_chars": len(system_prompt),
@@ -218,7 +237,7 @@ class SupportPromptBuilder:
                     self._observability,
                 ),
                 "retrieved_context_previews": [
-                    summarize_text(item, self._observability)
+                    summarize_text(item.text, self._observability)
                     for item in prompt_input.retrieved_context
                 ],
             },

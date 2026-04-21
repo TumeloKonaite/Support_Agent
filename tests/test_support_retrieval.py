@@ -1,6 +1,7 @@
 import json
 import unittest
 
+from src.app.domain.support.models import SupportContextChunk
 from src.app.domain.support.observability import SupportObservabilitySettings
 from src.app.domain.support.retrieval import NoOpReranker, RetrievalPipeline
 from src.app.infrastructure.retrieval.retriever import (
@@ -51,6 +52,22 @@ class ReversingReranker:
 
 
 class RetrievalPipelineTests(unittest.TestCase):
+    def _context_chunk(
+        self,
+        *,
+        label: str,
+        text: str,
+        score: float,
+        source: str = "data/knowledge.json",
+    ) -> SupportContextChunk:
+        return SupportContextChunk(
+            chunk_id=f"chunk-{abs(hash((text, score, source)))}",
+            label=label,
+            text=text,
+            source=source,
+            score=score,
+        )
+
     def _parse_log_record(self, record: str) -> dict[str, object]:
         return json.loads(record)
 
@@ -88,8 +105,16 @@ class RetrievalPipelineTests(unittest.TestCase):
         self.assertEqual(
             decision.retrieved_context,
             (
-                "Source: data/knowledge.json\nContent: Refunds are reviewed within two business days.",
-                "Source: data/knowledge.json\nContent: Escalate exceptions to the care team.",
+                self._context_chunk(
+                    label="[1]",
+                    text="Refunds are reviewed within two business days.",
+                    score=0.92,
+                ),
+                self._context_chunk(
+                    label="[2]",
+                    text="Escalate exceptions to the care team.",
+                    score=0.70,
+                ),
             ),
         )
 
@@ -221,8 +246,12 @@ class RetrievalPipelineTests(unittest.TestCase):
         self.assertEqual(
             decision.retrieved_context,
             (
-                "Source: data/knowledge.json\nContent: Third match",
-                "Source: data/knowledge.json\nContent: Best match after rerank",
+                self._context_chunk(label="[1]", text="Third match", score=1.0),
+                self._context_chunk(
+                    label="[2]",
+                    text="Best match after rerank",
+                    score=0.9,
+                ),
             ),
         )
 
@@ -246,8 +275,16 @@ class RetrievalPipelineTests(unittest.TestCase):
         self.assertEqual(
             decision.retrieved_context,
             (
-                "Source: data/knowledge.json\nContent: Original best match",
-                "Source: data/knowledge.json\nContent: Original second match",
+                self._context_chunk(
+                    label="[1]",
+                    text="Original best match",
+                    score=0.91,
+                ),
+                self._context_chunk(
+                    label="[2]",
+                    text="Original second match",
+                    score=0.50,
+                ),
             ),
         )
 
@@ -272,7 +309,7 @@ class RetrievalPipelineTests(unittest.TestCase):
         self.assertEqual(
             decision.retrieved_context,
             (
-                "Source: data/knowledge.json\nContent: First result",
-                "Source: data/knowledge.json\nContent: Second result",
+                self._context_chunk(label="[1]", text="First result", score=0.88),
+                self._context_chunk(label="[2]", text="Second result", score=0.72),
             ),
         )

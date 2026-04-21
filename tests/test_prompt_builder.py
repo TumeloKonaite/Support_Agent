@@ -6,6 +6,7 @@ from src.app.domain.support.models import (
     ConversationTurn,
     KnowledgeSection,
     PromptBuildInput,
+    SupportContextChunk,
     SupportKnowledge,
 )
 from src.app.domain.support.observability import SupportObservabilitySettings
@@ -33,6 +34,21 @@ class StaticKnowledgeSource:
 
 
 class SupportPromptBuilderTests(unittest.TestCase):
+    def _context_chunk(
+        self,
+        *,
+        label: str,
+        text: str,
+        source: str = "data/knowledge.json",
+    ) -> SupportContextChunk:
+        return SupportContextChunk(
+            chunk_id=f"chunk-{label.strip('[]')}",
+            label=label,
+            text=text,
+            source=source,
+            score=0.9,
+        )
+
     def _parse_log_record(self, record: str) -> dict[str, object]:
         return json.loads(record)
 
@@ -97,6 +113,7 @@ class SupportPromptBuilderTests(unittest.TestCase):
         self.assertIn("Tone:", prompt.system_prompt)
         self.assertIn("Business knowledge:", prompt.system_prompt)
         self.assertIn("Policies:", prompt.system_prompt)
+        self.assertIn("Grounding rules:", prompt.system_prompt)
         self.assertIn("User: Where is my order?", prompt.user_prompt)
         self.assertIn(
             "Assistant: Can you share your order number?",
@@ -118,12 +135,16 @@ class SupportPromptBuilderTests(unittest.TestCase):
             PromptBuildInput(
                 user_message="Can I get a refund?",
                 retrieved_context=(
-                    "Source: data/knowledge.json\nContent: Refunds over 30 days require human review.",
+                    self._context_chunk(
+                        label="[1]",
+                        text="Refunds over 30 days require human review.",
+                    ),
                 ),
             )
         )
 
         self.assertIn("Retrieved business context:", prompt.user_prompt)
+        self.assertIn("[1] Source: data/knowledge.json", prompt.user_prompt)
         self.assertIn("Refunds over 30 days require human review.", prompt.user_prompt)
 
     def test_build_limits_and_truncates_retrieved_context(self) -> None:
@@ -133,19 +154,17 @@ class SupportPromptBuilderTests(unittest.TestCase):
         prompt = builder.build(
             PromptBuildInput(
                 user_message="Tell me about policies",
-                retrieved_context=(
-                    "one",
-                    "two",
-                    "three",
-                    "four",
-                    "five",
-                    "six",
-                    long_item,
+                retrieved_context=tuple(
+                    self._context_chunk(label=f"[{index}]", text=text)
+                    for index, text in enumerate(
+                        ("one", "two", "three", "four", "five", "six", long_item),
+                        start=1,
+                    )
                 ),
             )
         )
 
-        self.assertEqual(prompt.user_prompt.count("\n- "), 5)
+        self.assertEqual(prompt.user_prompt.count("\n["), 5)
         self.assertNotIn("six", prompt.user_prompt)
         self.assertNotIn(long_item, prompt.user_prompt)
 
@@ -182,11 +201,17 @@ class SupportPromptBuilderTests(unittest.TestCase):
 
         self.assertEqual(
             prompt.system_prompt,
-            "You are the Bare Beauty assistant for Bare Beauty.",
+            "You are the Bare Beauty assistant for Bare Beauty.\n\n"
+            "Grounding rules:\n"
+            "- When retrieved business context is provided, answer only from that context.\n"
+            "- Do not use outside knowledge or infer missing policy details.\n"
+            "- If the context does not support the answer, say that you do not have enough information.\n"
+            "- Cite every substantive claim with bracket citations such as [1] or [2].",
         )
         self.assertNotIn("Support contacts:", prompt.system_prompt)
         self.assertNotIn("Tone:", prompt.system_prompt)
         self.assertNotIn("Business knowledge:", prompt.system_prompt)
+        self.assertIn("Grounding rules:", prompt.system_prompt)
 
     def test_build_output_remains_stable_for_known_inputs(self) -> None:
         builder = self._build_builder()
@@ -199,7 +224,10 @@ class SupportPromptBuilderTests(unittest.TestCase):
                 ],
                 user_message="The serum box is sealed.",
                 retrieved_context=(
-                    "Source: data/knowledge.json\nContent: Sealed products can be returned within 30 days.",
+                    self._context_chunk(
+                        label="[1]",
+                        text="Sealed products can be returned within 30 days.",
+                    ),
                 ),
             )
         )
@@ -225,6 +253,11 @@ class SupportPromptBuilderTests(unittest.TestCase):
                     "- Escalate account changes to a human agent.\n\n"
                     "FAQs:\n"
                     "- Customers often ask about appointments.",
+                    "Grounding rules:\n"
+                    "- When retrieved business context is provided, answer only from that context.\n"
+                    "- Do not use outside knowledge or infer missing policy details.\n"
+                    "- If the context does not support the answer, say that you do not have enough information.\n"
+                    "- Cite every substantive claim with bracket citations such as [1] or [2].",
                 ]
             ),
         )
@@ -234,7 +267,9 @@ class SupportPromptBuilderTests(unittest.TestCase):
             "User: Can I return this?\n"
             "Assistant: What was opened?\n\n"
             "Retrieved business context:\n"
-            "- Source: data/knowledge.json Content: Sealed products can be returned within 30 days.\n\n"
+            "Use only the context below for business facts. Cite every substantive claim with the matching bracket label.\n"
+            "[1] Source: data/knowledge.json\n"
+            "Sealed products can be returned within 30 days.\n\n"
             "Latest customer message:\n"
             "The serum box is sealed.\n\n"
             "Respond as the support assistant.",
@@ -256,7 +291,10 @@ class SupportPromptBuilderTests(unittest.TestCase):
                     user_message="My email is customer@example.com and order 12345 is late.",
                     request_id="session-1",
                     retrieved_context=(
-                        "Source: data/knowledge.json\nContent: Orders over 1000 require manual review.",
+                        self._context_chunk(
+                            label="[1]",
+                            text="Orders over 1000 require manual review.",
+                        ),
                     ),
                 )
             )
@@ -268,7 +306,7 @@ class SupportPromptBuilderTests(unittest.TestCase):
         self.assertEqual(event["retrieved_chunk_count"], 1)
         self.assertEqual(
             event["system_sections"],
-            ["identity", "contact", "tone", "knowledge"],
+            ["identity", "contact", "tone", "knowledge", "grounding"],
         )
         self.assertEqual(
             event["user_sections"],
@@ -284,5 +322,5 @@ class SupportPromptBuilderTests(unittest.TestCase):
         )
         self.assertEqual(
             event["retrieved_context_previews"][0]["preview"],
-            "Source: data/knowledge.json Content: Orders over [redacted-number] require manual review.",
+            "Orders over [redacted-number] require manual review.",
         )

@@ -25,6 +25,38 @@ class ChatResult:
     response: str
 
 
+@dataclass(frozen=True, slots=True)
+class SupportContextChunk:
+    """Citation-ready retrieved business context used during answer generation."""
+
+    chunk_id: str
+    label: str
+    text: str
+    source: str | None = None
+    score: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SupportCitation:
+    """Structured citation metadata surfaced with grounded support answers."""
+
+    chunk_id: str
+    label: str
+    source: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SupportAnswer:
+    """Structured support answer metadata for grounded and fallback responses."""
+
+    message: str
+    citations: tuple[SupportCitation, ...] = ()
+    context_chunks: tuple[SupportContextChunk, ...] = ()
+    used_context: bool = False
+    grounding_status: str = "ungrounded"
+    fallback_reason: str | None = None
+
+
 @dataclass(slots=True)
 class PromptBuildInput:
     """Domain input required to generate a support prompt."""
@@ -33,7 +65,7 @@ class PromptBuildInput:
     user_message: str = ""
     tenant_id: str | None = None
     request_id: str | None = None
-    retrieved_context: tuple[str, ...] = ()
+    retrieved_context: tuple[SupportContextChunk, ...] = ()
 
 
 @dataclass(slots=True)
