@@ -1,5 +1,7 @@
+import json
 import unittest
 
+from src.app.domain.support.observability import SupportObservabilitySettings
 from src.app.domain.support.retrieval import NoOpReranker, RetrievalPipeline
 from src.app.infrastructure.retrieval.retriever import (
     KnowledgeChunk,
@@ -49,6 +51,9 @@ class ReversingReranker:
 
 
 class RetrievalPipelineTests(unittest.TestCase):
+    def _parse_log_record(self, record: str) -> dict[str, object]:
+        return json.loads(record)
+
     def _result(
         self,
         *,
@@ -87,6 +92,70 @@ class RetrievalPipelineTests(unittest.TestCase):
                 "Source: data/knowledge.json\nContent: Escalate exceptions to the care team.",
             ),
         )
+
+    def test_run_logs_retrieval_scores_and_decision_metadata(self) -> None:
+        retriever = RecordingRetriever(
+            results=[
+                self._result(text="Refunds are reviewed within two business days.", score=0.92),
+                self._result(text="Escalate exceptions to the care team.", score=0.70),
+            ]
+        )
+        pipeline = RetrievalPipeline(
+            retriever=retriever,
+            observability=SupportObservabilitySettings(
+                prompt_preview_enabled=True,
+                max_preview_chars=80,
+            ),
+        )
+
+        with self.assertLogs("src.app.domain.support.retrieval", level="INFO") as logs:
+            decision = pipeline.run("Refund request for order 12345", request_id="session-1")
+
+        self.assertFalse(decision.used_fallback)
+        event = self._parse_log_record(logs.records[-1].getMessage())
+        self.assertEqual(event["event"], "support.retrieval.completed")
+        self.assertEqual(event["request_id"], "session-1")
+        self.assertEqual(event["decision_reason"], "high_confidence")
+        self.assertEqual(event["used_fallback"], False)
+        self.assertAlmostEqual(event["confidence"], 0.92)
+        self.assertEqual(event["threshold"], 0.6)
+        self.assertEqual(event["retrieved_count"], 2)
+        self.assertEqual(event["selected_count"], 2)
+        self.assertEqual(
+            event["query"],
+            {
+                "length": len("Refund request for order 12345"),
+                "preview": "Refund request for order [redacted-number]",
+            },
+        )
+        first_chunk = event["retrieved_chunks"][0]
+        self.assertEqual(first_chunk["rank"], 1)
+        self.assertEqual(first_chunk["source"], "data/knowledge.json")
+        self.assertAlmostEqual(first_chunk["score"], 0.92)
+        self.assertEqual(
+            first_chunk["content"]["preview"],
+            "Refunds are reviewed within two business days.",
+        )
+
+    def test_run_logs_low_confidence_fallback_reason(self) -> None:
+        retriever = RecordingRetriever(
+            results=[
+                self._result(text="General order help guidance.", score=0.62),
+                self._result(text="Similar but ambiguous order guidance.", score=0.60),
+            ]
+        )
+        pipeline = RetrievalPipeline(retriever=retriever)
+
+        with self.assertLogs("src.app.domain.support.retrieval", level="INFO") as logs:
+            decision = pipeline.run("Where is order 12345?", request_id="session-2")
+
+        self.assertTrue(decision.used_fallback)
+        event = self._parse_log_record(logs.records[-1].getMessage())
+        self.assertEqual(event["decision_reason"], "low_confidence")
+        self.assertEqual(event["fallback_reason"], "low_confidence")
+        self.assertEqual(event["used_fallback"], True)
+        self.assertAlmostEqual(event["confidence"], 0.52)
+        self.assertIsNone(event["query"]["preview"])
 
     def test_run_uses_fallback_for_low_confidence_results(self) -> None:
         retriever = RecordingRetriever(

@@ -6,6 +6,7 @@ from src.app.domain.support.prompt_builder import (
     KnowledgeSource,
     SupportPromptBuilder,
 )
+from src.app.domain.support.observability import SupportObservabilitySettings
 from src.app.domain.support.retrieval import RetrievalPipeline
 from src.app.domain.support.service import SupportService
 from src.app.infrastructure.content.business_profile_loader import (
@@ -64,9 +65,16 @@ def get_knowledge_loader() -> KnowledgeSource:
 @lru_cache
 def get_support_prompt_builder() -> SupportPromptBuilder:
     """Return the support prompt builder."""
+    settings = get_config()
     return SupportPromptBuilder(
         business_profile_source=get_business_profile_loader(),
         knowledge_source=get_knowledge_loader(),
+        observability=SupportObservabilitySettings(
+            enabled=settings.support_observability_enabled,
+            prompt_preview_enabled=settings.support_observability_prompt_preview_enabled,
+            redact_sensitive_fields=settings.support_observability_redact_sensitive_fields,
+            max_preview_chars=settings.support_observability_max_preview_chars,
+        ),
     )
 
 
@@ -84,7 +92,16 @@ def get_retriever() -> Retriever:
 @lru_cache
 def get_support_retrieval_pipeline() -> RetrievalPipeline:
     """Return the support-domain retrieval pipeline."""
-    return RetrievalPipeline(retriever=get_retriever())
+    settings = get_config()
+    return RetrievalPipeline(
+        retriever=get_retriever(),
+        observability=SupportObservabilitySettings(
+            enabled=settings.support_observability_enabled,
+            prompt_preview_enabled=settings.support_observability_prompt_preview_enabled,
+            redact_sensitive_fields=settings.support_observability_redact_sensitive_fields,
+            max_preview_chars=settings.support_observability_max_preview_chars,
+        ),
+    )
 
 
 def get_support_service() -> SupportService:

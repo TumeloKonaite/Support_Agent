@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     retrieval_vector_store_path: Path = Field(
         default=Path("data/retrieval/vector_store.json")
     )
+    support_observability_enabled: bool = Field(default=True)
+    support_observability_prompt_preview_enabled: bool = Field(default=False)
+    support_observability_redact_sensitive_fields: bool = Field(default=True)
+    support_observability_max_preview_chars: int = Field(default=160, ge=16)
 
     model_config = SettingsConfigDict(
         env_file=".env",
