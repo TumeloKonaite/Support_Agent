@@ -102,6 +102,44 @@ class SupportPromptBuilderTests(unittest.TestCase):
 
         self.assertIn("No previous conversation history.", prompt.user_prompt)
 
+    def test_build_includes_retrieved_context_when_available(self) -> None:
+        builder = self._build_builder()
+
+        prompt = builder.build(
+            PromptBuildInput(
+                user_message="Can I get a refund?",
+                retrieved_context=(
+                    "Source: data/knowledge.json\nContent: Refunds over 30 days require human review.",
+                ),
+            )
+        )
+
+        self.assertIn("Retrieved business context:", prompt.user_prompt)
+        self.assertIn("Refunds over 30 days require human review.", prompt.user_prompt)
+
+    def test_build_limits_and_truncates_retrieved_context(self) -> None:
+        builder = self._build_builder()
+        long_item = "A" * 600
+
+        prompt = builder.build(
+            PromptBuildInput(
+                user_message="Tell me about policies",
+                retrieved_context=(
+                    "one",
+                    "two",
+                    "three",
+                    "four",
+                    "five",
+                    "six",
+                    long_item,
+                ),
+            )
+        )
+
+        self.assertEqual(prompt.user_prompt.count("\n- "), 5)
+        self.assertNotIn("six", prompt.user_prompt)
+        self.assertNotIn(long_item, prompt.user_prompt)
+
     def test_build_passes_tenant_id_to_content_sources(self) -> None:
         profile_source = StaticBusinessProfileSource(
             BusinessProfile(
@@ -151,6 +189,9 @@ class SupportPromptBuilderTests(unittest.TestCase):
                     ConversationTurn(role="assistant", content="What was opened?"),
                 ],
                 user_message="The serum box is sealed.",
+                retrieved_context=(
+                    "Source: data/knowledge.json\nContent: Sealed products can be returned within 30 days.",
+                ),
             )
         )
 
@@ -183,6 +224,8 @@ class SupportPromptBuilderTests(unittest.TestCase):
             "Support conversation context:\n"
             "User: Can I return this?\n"
             "Assistant: What was opened?\n\n"
+            "Retrieved business context:\n"
+            "- Source: data/knowledge.json Content: Sealed products can be returned within 30 days.\n\n"
             "Latest customer message:\n"
             "The serum box is sealed.\n\n"
             "Respond as the support assistant.",

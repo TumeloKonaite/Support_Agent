@@ -41,6 +41,7 @@ class SupportPromptBuilder:
             user_prompt=self._build_user_prompt(
                 history=prompt_input.history,
                 user_message=prompt_input.user_message,
+                retrieved_context=prompt_input.retrieved_context,
             ),
         )
 
@@ -61,21 +62,42 @@ class SupportPromptBuilder:
         self,
         history: list[ConversationTurn],
         user_message: str,
+        retrieved_context: tuple[str, ...],
     ) -> str:
         history_text = self._render_history(history)
-        return (
+        sections = [
             "Support conversation context:\n"
-            f"{history_text}\n\n"
+            f"{history_text}"
+        ]
+        retrieved_context_text = self._render_retrieved_context(retrieved_context)
+        if retrieved_context_text:
+            sections.append(retrieved_context_text)
+        sections.append(
             "Latest customer message:\n"
             f"{user_message}\n\n"
             "Respond as the support assistant."
         )
+        return "\n\n".join(sections)
 
     def _render_history(self, history: list[ConversationTurn]) -> str:
         if not history:
             return "No previous conversation history."
 
         return "\n".join(f"{turn.role.title()}: {turn.content}" for turn in history)
+
+    def _render_retrieved_context(self, retrieved_context: tuple[str, ...]) -> str:
+        if not retrieved_context:
+            return ""
+
+        max_items = 5
+        max_item_length = 500
+        lines = ["Retrieved business context:"]
+        for item in retrieved_context[:max_items]:
+            normalized = " ".join(item.split())
+            if len(normalized) > max_item_length:
+                normalized = normalized[: max_item_length - 3].rstrip() + "..."
+            lines.append(f"- {normalized}")
+        return "\n".join(lines)
 
     def _render_identity_section(self, business_profile: BusinessProfile) -> str:
         lines = [

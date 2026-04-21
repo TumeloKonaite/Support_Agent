@@ -32,6 +32,7 @@ class PromptBuildInput:
     history: list[ConversationTurn] = field(default_factory=list)
     user_message: str = ""
     tenant_id: str | None = None
+    retrieved_context: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
