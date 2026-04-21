@@ -12,6 +12,9 @@ from src.app.infrastructure.content.business_profile_loader import (
 )
 from src.app.infrastructure.content.knowledge_loader import KnowledgeLoader
 from src.app.infrastructure.llm.openai_client import LLMClient, OpenAIClient
+from src.app.infrastructure.retrieval.indexer import build_embedder
+from src.app.infrastructure.retrieval.retriever import Retriever, VectorStoreRetriever
+from src.app.infrastructure.retrieval.vector_store import JsonVectorStore
 from src.app.infrastructure.storage.conversation_store import ConversationStore
 from src.app.infrastructure.storage.file_conversation_store import (
     FileConversationStore,
@@ -66,10 +69,22 @@ def get_support_prompt_builder() -> SupportPromptBuilder:
     )
 
 
+@lru_cache
+def get_retriever() -> Retriever:
+    """Return the configured retrieval implementation."""
+    settings = get_config()
+    return VectorStoreRetriever(
+        embedder=build_embedder(settings),
+        vector_store=JsonVectorStore(settings.retrieval_vector_store_path),
+        default_top_k=settings.retrieval_top_k,
+    )
+
+
 def get_support_service() -> SupportService:
     """Build the support service with its infrastructure dependencies."""
     return SupportService(
         conversation_store=get_conversation_store(),
         openai_client=get_openai_client(),
         prompt_builder=get_support_prompt_builder(),
+        retriever=get_retriever(),
     )

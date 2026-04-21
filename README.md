@@ -1,10 +1,10 @@
 # Support Agent Starter
 
-[![Python](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-ready-009688.svg)](https://fastapi.tiangolo.com/)
-[![OpenAI](https://img.shields.io/badge/OpenAI-Responses%20API-412991.svg)](https://platform.openai.com/docs)
-[![Tests](https://img.shields.io/badge/tests-pytest-0A9EDC.svg)](https://docs.pytest.org/)
-[![License](https://img.shields.io/badge/license-not%20specified-lightgrey.svg)](#license)
+[Python](https://www.python.org/)
+[FastAPI](https://fastapi.tiangolo.com/)
+[OpenAI](https://platform.openai.com/docs)
+[Tests](https://docs.pytest.org/)
+[License](#license)
 
 A small FastAPI customer-support assistant starter that can be adapted for many kinds of businesses. The app loads business-managed JSON documents, builds a support prompt from those documents and conversation history, calls OpenAI, and stores chat transcripts on disk.
 
@@ -225,24 +225,28 @@ If no `session_id` is provided, the app generates one internally. The current HT
 
 Settings are loaded from environment variables and `.env`.
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `APP_NAME` | `Support API` | FastAPI application title |
-| `ENVIRONMENT` | `development` | Runtime environment label |
-| `API_V1_PREFIX` | empty | Reserved API prefix setting |
-| `CONTENT_DATA_DIR` | `data` | Directory containing business documents |
-| `CONVERSATION_STORAGE_DIR` | `data/conversations` | Directory for saved transcripts |
-| `OPENAI_API_KEY` | unset | Required for chat endpoints |
-| `OPENAI_MODEL` | `gpt-4.1-mini` | OpenAI model used by the LLM client |
+
+| Variable                   | Default              | Purpose                                 |
+| -------------------------- | -------------------- | --------------------------------------- |
+| `APP_NAME`                 | `Support API`        | FastAPI application title               |
+| `ENVIRONMENT`              | `development`        | Runtime environment label               |
+| `API_V1_PREFIX`            | empty                | Reserved API prefix setting             |
+| `CONTENT_DATA_DIR`         | `data`               | Directory containing business documents |
+| `CONVERSATION_STORAGE_DIR` | `data/conversations` | Directory for saved transcripts         |
+| `OPENAI_API_KEY`           | unset                | Required for chat endpoints             |
+| `OPENAI_MODEL`             | `gpt-4.1-mini`       | OpenAI model used by the LLM client     |
+
 
 ## API Endpoints
 
-| Method | Path | Description |
-| --- | --- | --- |
-| `GET` | `/` | Basic app verification |
-| `GET` | `/health` | Health check |
-| `POST` | `/chat` | Non-streaming support chat |
+
+| Method | Path           | Description                            |
+| ------ | -------------- | -------------------------------------- |
+| `GET`  | `/`            | Basic app verification                 |
+| `GET`  | `/health`      | Health check                           |
+| `POST` | `/chat`        | Non-streaming support chat             |
 | `POST` | `/chat/stream` | Streaming support chat as `text/plain` |
+
 
 `POST /chat` and `POST /chat/stream` accept:
 
