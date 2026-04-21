@@ -13,6 +13,7 @@ from src.app.domain.support.prompt_builder import (
     KnowledgeSource,
     SupportPromptBuilder,
 )
+from src.app.domain.support.retrieval import RetrievalPipeline
 from src.app.domain.support.service import SupportService
 from src.app.infrastructure.retrieval.retriever import (
     KnowledgeChunk,
@@ -131,6 +132,12 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             score=0.9,
         )
 
+    def _build_retrieval_pipeline(
+        self,
+        retriever: RecordingRetriever | None = None,
+    ) -> RetrievalPipeline:
+        return RetrievalPipeline(retriever=retriever or RecordingRetriever())
+
     async def test_chat_uses_existing_history_and_persists_new_turns(self) -> None:
         store = InMemoryConversationStore(
             {
@@ -145,7 +152,7 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             conversation_store=store,
             openai_client=client,
             prompt_builder=self._build_prompt_builder(),
-            retriever=RecordingRetriever(),
+            retrieval_pipeline=self._build_retrieval_pipeline(),
         )
 
         response = await service.chat(
@@ -178,7 +185,7 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             conversation_store=store,
             openai_client=client,
             prompt_builder=self._build_prompt_builder(),
-            retriever=RecordingRetriever(),
+            retrieval_pipeline=self._build_retrieval_pipeline(),
         )
 
         response = await service.chat(ChatRequest(message="hello", session_id="session-2"))
@@ -203,7 +210,7 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             conversation_store=store,
             openai_client=client,
             prompt_builder=self._build_prompt_builder(),
-            retriever=RecordingRetriever(),
+            retrieval_pipeline=self._build_retrieval_pipeline(),
         )
 
         response = await service.chat(ChatRequest(message="hello"))
@@ -236,7 +243,7 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             conversation_store=store,
             openai_client=client,
             prompt_builder=self._build_prompt_builder(),
-            retriever=RecordingRetriever(),
+            retrieval_pipeline=self._build_retrieval_pipeline(),
         )
 
         chunks = [
@@ -270,7 +277,7 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             conversation_store=store,
             openai_client=client,
             prompt_builder=self._build_prompt_builder(),
-            retriever=RecordingRetriever(),
+            retrieval_pipeline=self._build_retrieval_pipeline(),
         )
 
         chunks = [
@@ -301,7 +308,7 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             conversation_store=store,
             openai_client=client,
             prompt_builder=self._build_prompt_builder(),
-            retriever=RecordingRetriever(),
+            retrieval_pipeline=self._build_retrieval_pipeline(),
         )
 
         with self.assertRaisesRegex(RuntimeError, "stream failed"):
@@ -328,7 +335,7 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             conversation_store=store,
             openai_client=client,
             prompt_builder=self._build_prompt_builder(),
-            retriever=retriever,
+            retrieval_pipeline=self._build_retrieval_pipeline(retriever),
         )
 
         await service.chat(ChatRequest(message="Can you refund this?", session_id="session-6"))
@@ -350,7 +357,7 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             conversation_store=store,
             openai_client=client,
             prompt_builder=self._build_prompt_builder(),
-            retriever=retriever,
+            retrieval_pipeline=self._build_retrieval_pipeline(retriever),
         )
 
         chunks = [
@@ -372,7 +379,9 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             conversation_store=store,
             openai_client=client,
             prompt_builder=self._build_prompt_builder(),
-            retriever=RecordingRetriever(results=[]),
+            retrieval_pipeline=self._build_retrieval_pipeline(
+                RecordingRetriever(results=[])
+            ),
         )
 
         await service.chat(ChatRequest(message="hello", session_id="session-8"))
@@ -386,7 +395,9 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             conversation_store=store,
             openai_client=client,
             prompt_builder=self._build_prompt_builder(),
-            retriever=RecordingRetriever(error=RuntimeError("retrieval failed")),
+            retrieval_pipeline=self._build_retrieval_pipeline(
+                RecordingRetriever(error=RuntimeError("retrieval failed"))
+            ),
         )
 
         response = await service.chat(
@@ -394,4 +405,42 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(response.response, "assistant reply")
+        self.assertNotIn("Retrieved business context:", client.complete_calls[0][1].content)
+
+    async def test_chat_omits_low_confidence_retrieval_context(self) -> None:
+        store = InMemoryConversationStore()
+        client = RecordingOpenAIClient(response="assistant reply")
+        retriever = RecordingRetriever(
+            results=[
+                RetrievedContext(
+                    chunk=KnowledgeChunk(
+                        chunk_id="chunk-1",
+                        text="Standard returns are processed within five business days.",
+                        metadata={"source": "data/knowledge.json"},
+                    ),
+                    score=0.62,
+                ),
+                RetrievedContext(
+                    chunk=KnowledgeChunk(
+                        chunk_id="chunk-2",
+                        text="Refund approval timelines vary by payment method.",
+                        metadata={"source": "data/knowledge.json"},
+                    ),
+                    score=0.60,
+                ),
+            ]
+        )
+        service = SupportService(
+            conversation_store=store,
+            openai_client=client,
+            prompt_builder=self._build_prompt_builder(),
+            retrieval_pipeline=self._build_retrieval_pipeline(retriever),
+        )
+
+        response = await service.chat(
+            ChatRequest(message="How long do refunds take?", session_id="session-10")
+        )
+
+        self.assertEqual(response.response, "assistant reply")
+        self.assertEqual(retriever.calls, [("How long do refunds take?", None)])
         self.assertNotIn("Retrieved business context:", client.complete_calls[0][1].content)

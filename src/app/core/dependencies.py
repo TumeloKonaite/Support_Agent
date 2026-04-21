@@ -6,6 +6,7 @@ from src.app.domain.support.prompt_builder import (
     KnowledgeSource,
     SupportPromptBuilder,
 )
+from src.app.domain.support.retrieval import RetrievalPipeline
 from src.app.domain.support.service import SupportService
 from src.app.infrastructure.content.business_profile_loader import (
     BusinessProfileLoader,
@@ -80,11 +81,17 @@ def get_retriever() -> Retriever:
     )
 
 
+@lru_cache
+def get_support_retrieval_pipeline() -> RetrievalPipeline:
+    """Return the support-domain retrieval pipeline."""
+    return RetrievalPipeline(retriever=get_retriever())
+
+
 def get_support_service() -> SupportService:
     """Build the support service with its infrastructure dependencies."""
     return SupportService(
         conversation_store=get_conversation_store(),
         openai_client=get_openai_client(),
         prompt_builder=get_support_prompt_builder(),
-        retriever=get_retriever(),
+        retrieval_pipeline=get_support_retrieval_pipeline(),
     )
