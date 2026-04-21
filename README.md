@@ -3,19 +3,39 @@
 [Python](https://www.python.org/)
 [FastAPI](https://fastapi.tiangolo.com/)
 [OpenAI](https://platform.openai.com/docs)
-[Tests](https://docs.pytest.org/)
-[License](#license)
+[pytest](https://docs.pytest.org/)
 
-A small FastAPI customer-support assistant starter that can be adapted for many kinds of businesses. The app loads business-managed JSON documents, builds a support prompt from those documents and conversation history, calls OpenAI, and stores chat transcripts on disk.
+A small FastAPI customer-support assistant starter. The app loads business-managed content from `data/`, builds a support prompt from that content plus conversation history, retrieves relevant indexed knowledge, calls OpenAI for chat responses, and stores transcripts on disk.
+
+## Current Status
+
+The project is in a solid starter state rather than a finished product.
+
+Implemented today:
+
+- FastAPI app with `GET /`, `GET /health`, `POST /chat`, and `POST /chat/stream`
+- OpenAI-backed chat and streaming chat responses
+- File-backed conversation history keyed by `session_id`
+- JSON-backed business profile and support knowledge loaders
+- Local retrieval pipeline that indexes `data/` into a JSON vector store
+- Request-time retrieval that injects matched business context into prompts
+- Unit and route tests covering loaders, prompt building, retrieval, storage, service behavior, and API routes
+
+Not yet exposed or still intentionally simple:
+
+- No `tenant_id` in the public chat API, even though the loaders support tenant-specific files internally
+- No database or hosted vector store; retrieval persists to a local JSON file
+- No auth, admin UI, background jobs, or production deployment setup
+- Chat responses do not return the generated `session_id`, so clients should send their own if they want continuity
 
 ## Features
 
-- FastAPI app with health, chat, and streaming chat endpoints.
-- OpenAI Responses API integration through an isolated LLM client.
-- JSON-backed business profile and support knowledge files that are easy to customize.
-- File-backed conversation history by `session_id`.
-- Layered structure for API routes, domain logic, infrastructure, and tests.
-- Designed to be forked and retuned for a new business with minimal code changes.
+- FastAPI API for synchronous and streaming support chat
+- OpenAI Responses API integration behind an isolated LLM client
+- Business profile and support knowledge loaded from editable JSON files
+- Retrieval-augmented prompting using a local vector index
+- Disk-based conversation storage for simple local development
+- Layered structure across API, domain, infrastructure, and tests
 
 ## Project Structure
 
@@ -23,13 +43,15 @@ A small FastAPI customer-support assistant starter that can be adapted for many 
 .
 ├── data/
 │   ├── business_profile.json       # Business identity, contact details, tone, metadata
-│   ├── knowledge.json              # Support policies, FAQs, and business knowledge
-│   └── conversations/              # Stored chat transcripts by session id
+│   ├── knowledge.json              # Policies, FAQs, services, product knowledge
+│   ├── conversations/              # Stored chat transcripts by session id
+│   └── retrieval/
+│       └── vector_store.json       # Generated local retrieval index
 ├── src/app/
 │   ├── api/                        # FastAPI routes and request/response schemas
 │   ├── core/                       # Settings and dependency wiring
 │   ├── domain/support/             # Prompt building and support service logic
-│   └── infrastructure/             # OpenAI, content loading, and storage adapters
+│   └── infrastructure/             # OpenAI, content loading, retrieval, storage
 ├── tests/                          # Unit and route tests
 ├── main.py                         # Simple local Python entry point
 ├── pyproject.toml                  # Project metadata and dependencies
@@ -38,13 +60,9 @@ A small FastAPI customer-support assistant starter that can be adapted for many 
 
 ## Requirements
 
-- Python 3.12 or newer
+- Python 3.12+
 - `uv`
-- An OpenAI API key for the `/chat` endpoints
-
-## Who This Is For
-
-This repo is intended as a reusable starting point for anyone who wants a support agent tailored to their own business. Fork it, update the JSON content in `data/`, adjust the tone and policies, and you have a basic support API without needing to redesign the whole app.
+- `OPENAI_API_KEY` for the chat endpoints
 
 ## Setup
 
@@ -63,20 +81,23 @@ APP_NAME=Support API
 ENVIRONMENT=development
 CONTENT_DATA_DIR=data
 CONVERSATION_STORAGE_DIR=data/conversations
+RETRIEVAL_EMBEDDING_PROVIDER=hashing
+RETRIEVAL_EMBEDDING_MODEL=hashing-v1
+RETRIEVAL_TOP_K=3
+RETRIEVAL_CHUNK_SIZE=500
+RETRIEVAL_CHUNK_OVERLAP=100
+RETRIEVAL_VECTOR_STORE_PATH=data/retrieval/vector_store.json
 ```
 
-Only `OPENAI_API_KEY` is required for real chat responses. The other values have defaults and can be omitted.
+Only `OPENAI_API_KEY` is required for chat. Retrieval defaults to the local `hashing` embedder, so you can build the knowledge index without switching to OpenAI embeddings.
 
-## Customizing For Your Business
+If you do want OpenAI embeddings for retrieval, set:
 
-Most customization happens in the `data/` directory:
+```env
+RETRIEVAL_EMBEDDING_PROVIDER=openai
+```
 
-- Update `data/business_profile.json` with your business name, support channels, operating hours, escalation rules, and tone.
-- Update `data/knowledge.json` with your policies, FAQs, services, product details, and handoff rules.
-- Keep the app code as-is if your needs fit the current API shape.
-- Extend the domain or API layers later if you want business-specific workflows.
-
-The goal is to let each fork keep the same support-agent foundation while swapping in business-specific content and behavior.
+That mode also requires `OPENAI_API_KEY`.
 
 ## Run The API
 
@@ -98,7 +119,7 @@ Health check:
 curl http://127.0.0.1:8000/health
 ```
 
-Send a chat request:
+Chat request:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/chat \
@@ -106,7 +127,7 @@ curl -X POST http://127.0.0.1:8000/chat \
   -d '{"message": "What are your support hours?", "session_id": "demo-session"}'
 ```
 
-Stream a chat response:
+Streaming chat request:
 
 ```bash
 curl -N -X POST http://127.0.0.1:8000/chat/stream \
@@ -114,13 +135,13 @@ curl -N -X POST http://127.0.0.1:8000/chat/stream \
   -d '{"message": "Can you help me with a refund?", "session_id": "demo-session"}'
 ```
 
-## Business Documents
+## Business Content
 
-The assistant reads business content from the `data/` directory. These files are intended to be edited in each fork so the agent reflects that business's identity, policies, and support knowledge.
+The assistant reads its business context from the `data/` directory.
 
 ### Business Profile
 
-Edit `data/business_profile.json` for business identity and support operations:
+Edit `data/business_profile.json` for identity and support operations:
 
 ```json
 {
@@ -155,9 +176,9 @@ Optional fields:
 - `tone_guidelines`
 - `metadata`
 
-### Knowledge Base
+### Support Knowledge
 
-Edit `data/knowledge.json` for policies, FAQs, product notes, service details, handoff rules, and other support knowledge:
+Edit `data/knowledge.json` for policies, FAQs, product notes, services, handoff rules, and other support knowledge:
 
 ```json
 {
@@ -173,7 +194,7 @@ Edit `data/knowledge.json` for policies, FAQs, product notes, service details, h
 }
 ```
 
-Each key under `sections` becomes a named knowledge section in the system prompt. Each value must be a JSON array of strings.
+Each key under `sections` becomes a named section in the system prompt. Each value must be a JSON array.
 
 Useful section ideas:
 
@@ -189,16 +210,55 @@ Useful section ideas:
 - `Billing`
 - `Account Help`
 
-### Tenant-Specific Documents
+## Retrieval Pipeline
 
-The loaders support tenant-specific files even though the current chat API does not expose `tenant_id` yet. If domain code passes a tenant id, files are resolved like this:
+The app does two different things with knowledge:
+
+1. It reads structured JSON content from `data/business_profile.json` and `data/knowledge.json` directly when building prompts.
+2. It separately builds a retrieval index from supported files in `data/` so the service can pull in relevant context at chat time.
+
+Supported indexed file types:
+
+- `.json`
+- `.md`
+- `.txt`
+
+Ignored during indexing:
+
+- `data/conversations/`
+
+Build the local retrieval index:
+
+```bash
+uv run python -m src.app.infrastructure.retrieval.indexer
+```
+
+Test the index with a query:
+
+```bash
+uv run python -m src.app.infrastructure.retrieval.indexer --query "What are your support hours?"
+```
+
+By default, the generated vector store is written to:
+
+```text
+data/retrieval/vector_store.json
+```
+
+If the vector store is missing, chat requests still run, but retrieval will contribute no matched context.
+
+## Tenant-Specific Files
+
+The content loaders support tenant-specific files internally, although the current HTTP API does not expose `tenant_id`.
+
+If domain code supplies a tenant id, files are resolved like this:
 
 ```text
 data/{tenant_id}/business_profile.json
 data/{tenant_id}/knowledge.json
 ```
 
-If a tenant-specific file is missing, the app falls back to:
+If tenant-specific files are missing, the app falls back to:
 
 ```text
 data/business_profile.json
@@ -213,40 +273,42 @@ Conversations are stored as JSON files in:
 data/conversations/
 ```
 
-The filename is based on `session_id`. For example, `session_id: "demo-session"` is stored at:
+The filename is based on `session_id`. For example:
 
 ```text
 data/conversations/demo-session.json
 ```
 
-If no `session_id` is provided, the app generates one internally. The current HTTP response only returns the assistant response, so provide your own `session_id` when you want to continue a conversation across requests.
+If no `session_id` is provided, the service generates one internally. The current HTTP response only returns the assistant response, so clients should provide their own `session_id` if they want to continue a conversation across requests.
 
 ## Configuration
 
 Settings are loaded from environment variables and `.env`.
 
-
-| Variable                   | Default              | Purpose                                 |
-| -------------------------- | -------------------- | --------------------------------------- |
-| `APP_NAME`                 | `Support API`        | FastAPI application title               |
-| `ENVIRONMENT`              | `development`        | Runtime environment label               |
-| `API_V1_PREFIX`            | empty                | Reserved API prefix setting             |
-| `CONTENT_DATA_DIR`         | `data`               | Directory containing business documents |
-| `CONVERSATION_STORAGE_DIR` | `data/conversations` | Directory for saved transcripts         |
-| `OPENAI_API_KEY`           | unset                | Required for chat endpoints             |
-| `OPENAI_MODEL`             | `gpt-4.1-mini`       | OpenAI model used by the LLM client     |
-
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `APP_NAME` | `Support API` | FastAPI application title |
+| `ENVIRONMENT` | `development` | Runtime environment label |
+| `API_V1_PREFIX` | empty | Reserved API prefix setting |
+| `CONTENT_DATA_DIR` | `data` | Directory containing business content |
+| `CONVERSATION_STORAGE_DIR` | `data/conversations` | Directory for saved transcripts |
+| `OPENAI_API_KEY` | unset | Required for chat endpoints |
+| `OPENAI_MODEL` | `gpt-4.1-mini` | OpenAI model used by the LLM client |
+| `RETRIEVAL_EMBEDDING_PROVIDER` | `hashing` | Retrieval embedding backend |
+| `RETRIEVAL_EMBEDDING_MODEL` | `hashing-v1` | Embedding model name passed to the backend |
+| `RETRIEVAL_TOP_K` | `3` | Number of chunks retrieved per request |
+| `RETRIEVAL_CHUNK_SIZE` | `500` | Max chunk size used during indexing |
+| `RETRIEVAL_CHUNK_OVERLAP` | `100` | Overlap between indexed chunks |
+| `RETRIEVAL_VECTOR_STORE_PATH` | `data/retrieval/vector_store.json` | Local vector store output path |
 
 ## API Endpoints
 
-
-| Method | Path           | Description                            |
-| ------ | -------------- | -------------------------------------- |
-| `GET`  | `/`            | Basic app verification                 |
-| `GET`  | `/health`      | Health check                           |
-| `POST` | `/chat`        | Non-streaming support chat             |
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/` | Basic app verification |
+| `GET` | `/health` | Health check |
+| `POST` | `/chat` | Non-streaming support chat |
 | `POST` | `/chat/stream` | Streaming support chat as `text/plain` |
-
 
 `POST /chat` and `POST /chat/stream` accept:
 
@@ -267,22 +329,30 @@ Settings are loaded from environment variables and `.env`.
 
 ## Testing
 
-Run the test suite:
+Run the full test suite:
 
 ```bash
 uv run pytest
 ```
 
-The tests cover content loaders, prompt building, support policies, conversation storage, OpenAI client translation, service behavior, and API routes.
+The test suite currently covers:
+
+- content loaders
+- prompt building
+- support policies
+- retrieval indexing and lookup
+- conversation storage
+- OpenAI client translation
+- support service behavior
+- API routes
 
 ## Development Notes
 
-- Keep runtime business content in `data/business_profile.json` and `data/knowledge.json`.
-- Treat the JSON files in `data/` as the main customization layer for each fork.
-- Keep local secrets in `.env`; `.env` is ignored by Git.
-- Keep generated or test conversation transcripts in `data/conversations/`.
-- The app entry point for the API is `src.app.main:app`.
-- The root `main.py` is only a simple script entry point and is not the FastAPI server.
+- Keep runtime business content in `data/`.
+- Rebuild the retrieval index after changing knowledge documents if you want retrieval results to reflect those edits.
+- The FastAPI app entry point is `src.app.main:app`.
+- The root `main.py` is only a lightweight local script entry point.
+- `.env` is loaded automatically via `python-dotenv`.
 
 ## License
 
