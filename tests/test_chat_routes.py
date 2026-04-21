@@ -37,7 +37,15 @@ class ChatRouteTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"response": "handled: hello"})
+        self.assertEqual(
+            response.json(),
+            {
+                "response": "handled: hello",
+                "citations": [],
+                "used_context": False,
+                "grounding_status": "ungrounded",
+            },
+        )
         self.assertEqual(
             service.chat_requests,
             [ChatRequest(message="hello", session_id="session-1")],

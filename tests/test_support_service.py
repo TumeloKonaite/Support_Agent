@@ -163,23 +163,16 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             ChatRequest(message="new question", session_id="session-1")
         )
 
-        self.assertEqual(response.response, "assistant reply")
-        self.assertEqual(len(client.complete_calls), 1)
-        sent_messages = client.complete_calls[0]
-        self.assertEqual(sent_messages[0].role, "system")
-        self.assertIn("Glow Studio", sent_messages[0].content)
-        self.assertEqual(sent_messages[1].role, "user")
-        self.assertIn("User: older question", sent_messages[1].content)
-        self.assertIn("Assistant: older answer", sent_messages[1].content)
-        self.assertIn("Latest customer message:\nnew question", sent_messages[1].content)
+        self.assertEqual(response.response, "I don't have enough verified information in our support knowledge to answer that confidently. Please rephrase your question or contact the human support team for help.")
+        self.assertEqual(response.grounding_status, "fallback")
+        self.assertEqual(response.fallback_reason, "no_results")
+        self.assertEqual(len(client.complete_calls), 0)
         self.assertEqual(
-            store.data["session-1"],
-            [
-                ConversationTurn(role="user", content="older question"),
-                ConversationTurn(role="assistant", content="older answer"),
-                ConversationTurn(role="user", content="new question"),
-                ConversationTurn(role="assistant", content="assistant reply"),
-            ],
+            store.data["session-1"][-1],
+            ConversationTurn(
+                role="assistant",
+                content=response.response,
+            ),
         )
 
     async def test_chat_creates_new_session_history_when_missing(self) -> None:
@@ -194,16 +187,13 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
 
         response = await service.chat(ChatRequest(message="hello", session_id="session-2"))
 
-        self.assertEqual(response.response, "assistant reply")
-        self.assertIn(
-            "No previous conversation history.",
-            client.complete_calls[0][1].content,
-        )
+        self.assertEqual(response.grounding_status, "fallback")
+        self.assertEqual(len(client.complete_calls), 0)
         self.assertEqual(
             store.data["session-2"],
             [
                 ConversationTurn(role="user", content="hello"),
-                ConversationTurn(role="assistant", content="assistant reply"),
+                ConversationTurn(role="assistant", content=response.response),
             ],
         )
 
@@ -219,7 +209,7 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
 
         response = await service.chat(ChatRequest(message="hello"))
 
-        self.assertEqual(response.response, "assistant reply")
+        self.assertEqual(response.grounding_status, "fallback")
         self.assertEqual(len(store.load_calls), 1)
         generated_session_id = store.load_calls[0]
         self.assertTrue(generated_session_id)
@@ -233,7 +223,7 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
                         ConversationTurn(role="user", content="hello"),
                         ConversationTurn(
                             role="assistant",
-                            content="assistant reply",
+                            content=response.response,
                         ),
                     ],
                 )
@@ -257,20 +247,18 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             )
         ]
 
+        self.assertEqual(len(client.stream_calls), 0)
         self.assertEqual(
             chunks,
-            ["stream ", "reply"],
+            [
+                "I don't have enough verified information in our support knowledge to answer that confidently. Please rephrase your question or contact the human support team for help."
+            ],
         )
-        self.assertEqual(len(client.stream_calls), 1)
-        sent_messages = client.stream_calls[0]
-        self.assertEqual(sent_messages[0].role, "system")
-        self.assertEqual(sent_messages[1].role, "user")
-        self.assertIn("Latest customer message:\nstream me", sent_messages[1].content)
         self.assertEqual(
             store.data["session-3"],
             [
                 ConversationTurn(role="user", content="stream me"),
-                ConversationTurn(role="assistant", content="stream reply"),
+                ConversationTurn(role="assistant", content=chunks[0]),
             ],
         )
 
@@ -291,12 +279,17 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             )
         ]
 
-        self.assertEqual(chunks, ["part", "ial", " response"])
+        self.assertEqual(
+            chunks,
+            [
+                "I don't have enough verified information in our support knowledge to answer that confidently. Please rephrase your question or contact the human support team for help."
+            ],
+        )
         self.assertEqual(
             store.data["session-4"],
             [
                 ConversationTurn(role="user", content="split it"),
-                ConversationTurn(role="assistant", content="partial response"),
+                ConversationTurn(role="assistant", content=chunks[0]),
             ],
         )
 
@@ -315,15 +308,17 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             retrieval_pipeline=self._build_retrieval_pipeline(),
         )
 
-        with self.assertRaisesRegex(RuntimeError, "stream failed"):
-            [
-                chunk
-                async for chunk in service.stream_chat(
-                    ChatRequest(message="fail please", session_id="session-5")
-                )
-            ]
+        chunks = [
+            chunk
+            async for chunk in service.stream_chat(
+                ChatRequest(message="fail please", session_id="session-5")
+            )
+        ]
 
-        self.assertNotIn("session-5", store.data)
+        self.assertEqual(len(client.stream_calls), 0)
+        self.assertEqual(len(chunks), 1)
+        self.assertIn("don't have enough verified information", chunks[0])
+        self.assertIn("session-5", store.data)
 
     async def test_chat_calls_retriever_before_llm_and_includes_context(self) -> None:
         store = InMemoryConversationStore()
@@ -342,14 +337,21 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             retrieval_pipeline=self._build_retrieval_pipeline(retriever),
         )
 
-        await service.chat(ChatRequest(message="Can you refund this?", session_id="session-6"))
+        response = await service.chat(
+            ChatRequest(message="Can you refund this?", session_id="session-6")
+        )
 
         self.assertEqual(retriever.calls, [("Can you refund this?", 10)])
         self.assertIn("Retrieved business context:", client.complete_calls[0][1].content)
+        self.assertIn("[1] Source: data/knowledge.json", client.complete_calls[0][1].content)
         self.assertIn(
             "Refund exceptions must be escalated to a human specialist.",
             client.complete_calls[0][1].content,
         )
+        self.assertEqual(response.citations[0].label, "[1]")
+        self.assertTrue(response.used_context)
+        self.assertEqual(response.grounding_status, "grounded")
+        self.assertTrue(response.response.endswith("Sources: [1]"))
 
     async def test_stream_chat_uses_retrieved_context(self) -> None:
         store = InMemoryConversationStore()
@@ -371,7 +373,7 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             )
         ]
 
-        self.assertEqual(chunks, ["stream ", "reply"])
+        self.assertEqual(chunks, ["stream ", "reply", "\n\nSources: [1]"])
         self.assertEqual(retriever.calls, [("When are you open?", 10)])
         self.assertIn("Retrieved business context:", client.stream_calls[0][1].content)
         self.assertIn("Support hours are weekdays 9 to 5.", client.stream_calls[0][1].content)
@@ -388,9 +390,11 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             ),
         )
 
-        await service.chat(ChatRequest(message="hello", session_id="session-8"))
+        response = await service.chat(ChatRequest(message="hello", session_id="session-8"))
 
-        self.assertNotIn("Retrieved business context:", client.complete_calls[0][1].content)
+        self.assertEqual(response.grounding_status, "fallback")
+        self.assertEqual(response.fallback_reason, "no_results")
+        self.assertEqual(len(client.complete_calls), 0)
 
     async def test_chat_handles_retrieval_failures_without_crashing(self) -> None:
         store = InMemoryConversationStore()
@@ -408,8 +412,9 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             ChatRequest(message="Need help with my order", session_id="session-9")
         )
 
-        self.assertEqual(response.response, "assistant reply")
-        self.assertNotIn("Retrieved business context:", client.complete_calls[0][1].content)
+        self.assertEqual(response.grounding_status, "fallback")
+        self.assertEqual(response.fallback_reason, "retrieval_error")
+        self.assertEqual(len(client.complete_calls), 0)
 
     async def test_chat_omits_low_confidence_retrieval_context(self) -> None:
         store = InMemoryConversationStore()
@@ -445,9 +450,9 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             ChatRequest(message="How long do refunds take?", session_id="session-10")
         )
 
-        self.assertEqual(response.response, "assistant reply")
+        self.assertEqual(response.grounding_status, "fallback")
         self.assertEqual(retriever.calls, [("How long do refunds take?", 10)])
-        self.assertNotIn("Retrieved business context:", client.complete_calls[0][1].content)
+        self.assertEqual(len(client.complete_calls), 0)
 
     async def test_chat_logs_model_input_summary(self) -> None:
         store = InMemoryConversationStore(
@@ -482,3 +487,5 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(event["retrieval_confidence"], 0.9)
         self.assertEqual(event["retrieval_decision_reason"], "high_confidence")
         self.assertEqual(event["retrieved_context_count"], 1)
+        self.assertEqual(event["guardrail_status"], "grounded")
+        self.assertIsNone(event["guardrail_fallback_reason"])

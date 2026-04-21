@@ -2,6 +2,7 @@ from dataclasses import dataclass, replace
 import logging
 from typing import Protocol
 
+from src.app.domain.support.models import SupportContextChunk
 from src.app.domain.support.observability import (
     SupportObservabilitySettings,
     log_support_event,
@@ -23,7 +24,7 @@ DEFAULT_FINAL_TOP_K = 3
 class RetrievalDecision:
     """Structured result returned by the support retrieval pipeline."""
 
-    retrieved_context: tuple[str, ...] = ()
+    retrieved_context: tuple[SupportContextChunk, ...] = ()
     confidence_score: float = 0.0
     used_fallback: bool = False
     decision_reason: str = "not_evaluated"
@@ -239,14 +240,21 @@ class RetrievalPipeline:
             confidence -= LOW_CONFIDENCE_PENALTY
         return self._normalize_score(confidence)
 
-    def _render_context(self, results: list[RetrievedContext]) -> tuple[str, ...]:
-        rendered_context: list[str] = []
-        for result in results:
-            source = result.chunk.metadata.get("source")
-            if source:
-                rendered_context.append(f"Source: {source}\nContent: {result.chunk.text}")
-            else:
-                rendered_context.append(result.chunk.text)
+    def _render_context(
+        self,
+        results: list[RetrievedContext],
+    ) -> tuple[SupportContextChunk, ...]:
+        rendered_context: list[SupportContextChunk] = []
+        for rank, result in enumerate(results, start=1):
+            rendered_context.append(
+                SupportContextChunk(
+                    chunk_id=result.chunk.chunk_id,
+                    label=f"[{rank}]",
+                    text=result.chunk.text,
+                    source=result.chunk.metadata.get("source"),
+                    score=result.score,
+                )
+            )
         return tuple(rendered_context)
 
     def _normalize_score(self, score: float) -> float:

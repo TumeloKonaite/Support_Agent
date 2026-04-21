@@ -8,7 +8,7 @@ from src.app.domain.support.service import SupportService
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
-@router.post("", response_model=ChatResponse)
+@router.post("", response_model=ChatResponse, response_model_exclude_none=True)
 async def chat(
     payload: ChatRequest,
     service: SupportService = Depends(get_support_service),
