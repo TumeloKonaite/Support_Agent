@@ -8,6 +8,7 @@ from src.app.domain.support.models import (
     ConversationTurn,
     PromptBuildInput,
 )
+from src.app.domain.support.observability import log_support_event
 from src.app.domain.support.prompt_builder import SupportPromptBuilder
 from src.app.domain.support.retrieval import SupportRetrieval
 from src.app.infrastructure.llm.openai_client import LLMClient
@@ -73,17 +74,27 @@ class SupportService:
         user_message: str,
     ) -> list[ConversationTurn]:
         """Build the model input from stored history and the new user message."""
-        retrieval_decision = self._retrieval_pipeline.run(user_message)
-        logger.info(
-            "Support retrieval decision: reason=%s confidence=%.3f fallback=%s",
-            retrieval_decision.decision_reason,
-            retrieval_decision.confidence_score,
-            retrieval_decision.used_fallback,
+        retrieval_decision = self._retrieval_pipeline.run(
+            user_message,
+            request_id=session.session_id,
+        )
+        log_support_event(
+            logger,
+            event="support.request.model_input",
+            payload={
+                "request_id": session.session_id,
+                "history_turn_count": len(session.history),
+                "retrieval_used_fallback": retrieval_decision.used_fallback,
+                "retrieval_confidence": retrieval_decision.confidence_score,
+                "retrieval_decision_reason": retrieval_decision.decision_reason,
+                "retrieved_context_count": len(retrieval_decision.retrieved_context),
+            },
         )
         prompt = self._prompt_builder.build(
             PromptBuildInput(
                 history=session.history,
                 user_message=user_message,
+                request_id=session.session_id,
                 retrieved_context=retrieval_decision.retrieved_context,
             )
         )

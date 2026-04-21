@@ -1,3 +1,4 @@
+import json
 import unittest
 from collections.abc import AsyncIterator
 
@@ -100,6 +101,9 @@ class RecordingRetriever:
 
 
 class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
+    def _parse_log_record(self, record: str) -> dict[str, object]:
+        return json.loads(record)
+
     def _build_prompt_builder(self) -> SupportPromptBuilder:
         return SupportPromptBuilder(
             business_profile_source=StaticBusinessProfileSource(
@@ -444,3 +448,37 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.response, "assistant reply")
         self.assertEqual(retriever.calls, [("How long do refunds take?", 10)])
         self.assertNotIn("Retrieved business context:", client.complete_calls[0][1].content)
+
+    async def test_chat_logs_model_input_summary(self) -> None:
+        store = InMemoryConversationStore(
+            {
+                "session-11": [
+                    ConversationTurn(role="user", content="older question"),
+                    ConversationTurn(role="assistant", content="older answer"),
+                ]
+            }
+        )
+        client = RecordingOpenAIClient(response="assistant reply")
+        retriever = RecordingRetriever(
+            results=[self._build_retrieved_context("Refunds are reviewed within two days.")]
+        )
+        service = SupportService(
+            conversation_store=store,
+            openai_client=client,
+            prompt_builder=self._build_prompt_builder(),
+            retrieval_pipeline=self._build_retrieval_pipeline(retriever),
+        )
+
+        with self.assertLogs("src.app.domain.support.service", level="INFO") as logs:
+            await service.chat(
+                ChatRequest(message="Can you refund order 12345?", session_id="session-11")
+            )
+
+        event = self._parse_log_record(logs.records[-1].getMessage())
+        self.assertEqual(event["event"], "support.request.model_input")
+        self.assertEqual(event["request_id"], "session-11")
+        self.assertEqual(event["history_turn_count"], 2)
+        self.assertEqual(event["retrieval_used_fallback"], False)
+        self.assertAlmostEqual(event["retrieval_confidence"], 0.9)
+        self.assertEqual(event["retrieval_decision_reason"], "high_confidence")
+        self.assertEqual(event["retrieved_context_count"], 1)

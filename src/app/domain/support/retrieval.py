@@ -2,6 +2,11 @@ from dataclasses import dataclass, replace
 import logging
 from typing import Protocol
 
+from src.app.domain.support.observability import (
+    SupportObservabilitySettings,
+    log_support_event,
+    summarize_text,
+)
 from src.app.infrastructure.retrieval.retriever import RetrievedContext, Retriever
 
 
@@ -27,7 +32,12 @@ class RetrievalDecision:
 class SupportRetrieval(Protocol):
     """Domain abstraction for retrieval decisions used by support chat."""
 
-    def run(self, query: str) -> RetrievalDecision:
+    def run(
+        self,
+        query: str,
+        *,
+        request_id: str | None = None,
+    ) -> RetrievalDecision:
         """Retrieve and evaluate knowledge for a user query."""
 
 
@@ -63,13 +73,20 @@ class RetrievalPipeline:
         reranker: Reranker | None = None,
         candidate_pool_size: int = DEFAULT_CANDIDATE_POOL_SIZE,
         final_top_k: int = DEFAULT_FINAL_TOP_K,
+        observability: SupportObservabilitySettings | None = None,
     ) -> None:
         self._retriever = retriever
         self._reranker = reranker or NoOpReranker()
         self._candidate_pool_size = max(candidate_pool_size, final_top_k, 1)
         self._final_top_k = max(final_top_k, 1)
+        self._observability = observability or SupportObservabilitySettings()
 
-    def run(self, query: str) -> RetrievalDecision:
+    def run(
+        self,
+        query: str,
+        *,
+        request_id: str | None = None,
+    ) -> RetrievalDecision:
         try:
             results = self._retriever.retrieve(
                 query=query,
@@ -77,6 +94,16 @@ class RetrievalPipeline:
             )
         except Exception:
             logger.exception("Support retrieval failed; falling back to base prompt")
+            self._log_event(
+                "support.retrieval.error",
+                {
+                    "request_id": request_id,
+                    "query": summarize_text(query, self._observability),
+                    "candidate_pool_size": self._candidate_pool_size,
+                    "final_top_k": self._final_top_k,
+                    "fallback_reason": "retrieval_error",
+                },
+            )
             return RetrievalDecision(
                 confidence_score=0.0,
                 used_fallback=True,
@@ -84,6 +111,24 @@ class RetrievalPipeline:
             )
 
         if not results:
+            self._log_event(
+                "support.retrieval.completed",
+                {
+                    "request_id": request_id,
+                    "query": summarize_text(query, self._observability),
+                    "candidate_pool_size": self._candidate_pool_size,
+                    "final_top_k": self._final_top_k,
+                    "retrieved_count": 0,
+                    "selected_count": 0,
+                    "confidence": 0.0,
+                    "threshold": CONFIDENCE_THRESHOLD,
+                    "used_fallback": True,
+                    "decision_reason": "no_results",
+                    "fallback_reason": "no_results",
+                    "retrieved_chunks": [],
+                    "selected_chunks": [],
+                },
+            )
             return RetrievalDecision(
                 confidence_score=0.0,
                 used_fallback=True,
@@ -93,6 +138,24 @@ class RetrievalPipeline:
         ranked_results = self._rerank_results(query, results)
         selected_results = ranked_results[: self._final_top_k]
         if not selected_results:
+            self._log_event(
+                "support.retrieval.completed",
+                {
+                    "request_id": request_id,
+                    "query": summarize_text(query, self._observability),
+                    "candidate_pool_size": self._candidate_pool_size,
+                    "final_top_k": self._final_top_k,
+                    "retrieved_count": len(ranked_results),
+                    "selected_count": 0,
+                    "confidence": 0.0,
+                    "threshold": CONFIDENCE_THRESHOLD,
+                    "used_fallback": True,
+                    "decision_reason": "no_results",
+                    "fallback_reason": "no_results",
+                    "retrieved_chunks": self._serialize_results(ranked_results),
+                    "selected_chunks": [],
+                },
+            )
             return RetrievalDecision(
                 confidence_score=0.0,
                 used_fallback=True,
@@ -100,7 +163,28 @@ class RetrievalPipeline:
             )
 
         confidence = self._compute_confidence(selected_results)
-        if confidence < CONFIDENCE_THRESHOLD:
+        should_fallback = confidence < CONFIDENCE_THRESHOLD
+        decision_reason = "low_confidence" if should_fallback else "high_confidence"
+        fallback_reason = decision_reason if should_fallback else None
+        self._log_event(
+            "support.retrieval.completed",
+            {
+                "request_id": request_id,
+                "query": summarize_text(query, self._observability),
+                "candidate_pool_size": self._candidate_pool_size,
+                "final_top_k": self._final_top_k,
+                "retrieved_count": len(ranked_results),
+                "selected_count": len(selected_results),
+                "confidence": confidence,
+                "threshold": CONFIDENCE_THRESHOLD,
+                "used_fallback": should_fallback,
+                "decision_reason": decision_reason,
+                "fallback_reason": fallback_reason,
+                "retrieved_chunks": self._serialize_results(ranked_results),
+                "selected_chunks": self._serialize_results(selected_results),
+            },
+        )
+        if should_fallback:
             return RetrievalDecision(
                 confidence_score=confidence,
                 used_fallback=True,
@@ -167,3 +251,28 @@ class RetrievalPipeline:
 
     def _normalize_score(self, score: float) -> float:
         return max(0.0, min(1.0, score))
+
+    def _serialize_results(
+        self,
+        results: list[RetrievedContext],
+    ) -> list[dict[str, object]]:
+        serialized: list[dict[str, object]] = []
+        for rank, result in enumerate(results, start=1):
+            serialized.append(
+                {
+                    "rank": rank,
+                    "chunk_id": result.chunk.chunk_id,
+                    "source": result.chunk.metadata.get("source"),
+                    "document_id": result.chunk.metadata.get("document_id"),
+                    "score": result.score,
+                    "original_score": result.original_score,
+                    "reranker_score": result.reranker_score,
+                    "content": summarize_text(result.chunk.text, self._observability),
+                }
+            )
+        return serialized
+
+    def _log_event(self, event: str, payload: dict[str, object]) -> None:
+        if not self._observability.enabled:
+            return
+        log_support_event(logger, event=event, payload=payload)

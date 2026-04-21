@@ -1,3 +1,4 @@
+import json
 import unittest
 
 from src.app.domain.support.models import (
@@ -7,6 +8,7 @@ from src.app.domain.support.models import (
     PromptBuildInput,
     SupportKnowledge,
 )
+from src.app.domain.support.observability import SupportObservabilitySettings
 from src.app.domain.support.prompt_builder import SupportPromptBuilder
 
 
@@ -31,7 +33,13 @@ class StaticKnowledgeSource:
 
 
 class SupportPromptBuilderTests(unittest.TestCase):
-    def _build_builder(self) -> SupportPromptBuilder:
+    def _parse_log_record(self, record: str) -> dict[str, object]:
+        return json.loads(record)
+
+    def _build_builder(
+        self,
+        observability: SupportObservabilitySettings | None = None,
+    ) -> SupportPromptBuilder:
         return SupportPromptBuilder(
             business_profile_source=StaticBusinessProfileSource(
                 BusinessProfile(
@@ -64,7 +72,8 @@ class SupportPromptBuilderTests(unittest.TestCase):
                         ),
                     )
                 )
-            )
+            ),
+            observability=observability,
         )
 
     def test_build_returns_support_system_and_user_prompts(self) -> None:
@@ -229,4 +238,51 @@ class SupportPromptBuilderTests(unittest.TestCase):
             "Latest customer message:\n"
             "The serum box is sealed.\n\n"
             "Respond as the support assistant.",
+        )
+
+    def test_build_logs_prompt_assembly_metadata_with_redacted_preview(self) -> None:
+        builder = self._build_builder(
+            SupportObservabilitySettings(
+                prompt_preview_enabled=True,
+                redact_sensitive_fields=True,
+                max_preview_chars=120,
+            )
+        )
+
+        with self.assertLogs("src.app.domain.support.prompt_builder", level="INFO") as logs:
+            builder.build(
+                PromptBuildInput(
+                    history=[ConversationTurn(role="user", content="Order 12345")],
+                    user_message="My email is customer@example.com and order 12345 is late.",
+                    request_id="session-1",
+                    retrieved_context=(
+                        "Source: data/knowledge.json\nContent: Orders over 1000 require manual review.",
+                    ),
+                )
+            )
+
+        event = self._parse_log_record(logs.records[-1].getMessage())
+        self.assertEqual(event["event"], "support.prompt.assembled")
+        self.assertEqual(event["request_id"], "session-1")
+        self.assertEqual(event["included_retrieval_context"], True)
+        self.assertEqual(event["retrieved_chunk_count"], 1)
+        self.assertEqual(
+            event["system_sections"],
+            ["identity", "contact", "tone", "knowledge"],
+        )
+        self.assertEqual(
+            event["user_sections"],
+            [
+                "conversation_context",
+                "retrieved_business_context",
+                "latest_customer_message",
+            ],
+        )
+        self.assertEqual(
+            event["user_message"]["preview"],
+            "My email is [redacted-email] and order [redacted-number] is late.",
+        )
+        self.assertEqual(
+            event["retrieved_context_previews"][0]["preview"],
+            "Source: data/knowledge.json Content: Orders over [redacted-number] require manual review.",
         )
