@@ -20,6 +20,8 @@ class RetrievedContext:
 
     chunk: KnowledgeChunk
     score: float
+    original_score: float | None = None
+    reranker_score: float | None = None
 
 
 class Retriever(Protocol):

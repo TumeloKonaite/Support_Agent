@@ -1,6 +1,6 @@
 import unittest
 
-from src.app.domain.support.retrieval import RetrievalPipeline
+from src.app.domain.support.retrieval import NoOpReranker, RetrievalPipeline
 from src.app.infrastructure.retrieval.retriever import (
     KnowledgeChunk,
     RetrievedContext,
@@ -22,6 +22,30 @@ class RecordingRetriever:
         if self.error is not None:
             raise self.error
         return list(self.results)
+
+
+class ReversingReranker:
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error = error
+        self.calls: list[tuple[str, list[RetrievedContext]]] = []
+
+    def rerank(
+        self,
+        query: str,
+        results: list[RetrievedContext],
+    ) -> list[RetrievedContext]:
+        self.calls.append((query, list(results)))
+        if self.error is not None:
+            raise self.error
+        return [
+            RetrievedContext(
+                chunk=result.chunk,
+                score=1.0 - (index * 0.1),
+                original_score=result.original_score,
+                reranker_score=result.reranker_score,
+            )
+            for index, result in enumerate(reversed(results))
+        ]
 
 
 class RetrievalPipelineTests(unittest.TestCase):
@@ -52,7 +76,7 @@ class RetrievalPipelineTests(unittest.TestCase):
 
         decision = pipeline.run("Can you refund this?")
 
-        self.assertEqual(retriever.calls, [("Can you refund this?", None)])
+        self.assertEqual(retriever.calls, [("Can you refund this?", 10)])
         self.assertFalse(decision.used_fallback)
         self.assertEqual(decision.decision_reason, "high_confidence")
         self.assertAlmostEqual(decision.confidence_score, 0.92)
@@ -101,3 +125,85 @@ class RetrievalPipelineTests(unittest.TestCase):
         self.assertEqual(decision.decision_reason, "retrieval_error")
         self.assertEqual(decision.confidence_score, 0.0)
         self.assertEqual(decision.retrieved_context, ())
+
+    def test_run_uses_reranked_order_for_confidence_and_context(self) -> None:
+        retriever = RecordingRetriever(
+            results=[
+                self._result(text="Weak match", score=0.61),
+                self._result(text="Best match after rerank", score=0.55),
+                self._result(text="Third match", score=0.40),
+            ]
+        )
+        reranker = ReversingReranker()
+        pipeline = RetrievalPipeline(
+            retriever=retriever,
+            reranker=reranker,
+            candidate_pool_size=5,
+            final_top_k=2,
+        )
+
+        decision = pipeline.run("Can you help with refunds?")
+
+        self.assertEqual(retriever.calls, [("Can you help with refunds?", 5)])
+        self.assertEqual(len(reranker.calls), 1)
+        self.assertFalse(decision.used_fallback)
+        self.assertEqual(decision.decision_reason, "high_confidence")
+        self.assertAlmostEqual(decision.confidence_score, 1.0)
+        self.assertEqual(
+            decision.retrieved_context,
+            (
+                "Source: data/knowledge.json\nContent: Third match",
+                "Source: data/knowledge.json\nContent: Best match after rerank",
+            ),
+        )
+
+    def test_run_falls_back_to_original_order_when_reranking_fails(self) -> None:
+        retriever = RecordingRetriever(
+            results=[
+                self._result(text="Original best match", score=0.91),
+                self._result(text="Original second match", score=0.50),
+            ]
+        )
+        pipeline = RetrievalPipeline(
+            retriever=retriever,
+            reranker=ReversingReranker(error=RuntimeError("rerank failed")),
+        )
+
+        decision = pipeline.run("Need policy help")
+
+        self.assertFalse(decision.used_fallback)
+        self.assertEqual(decision.decision_reason, "high_confidence")
+        self.assertAlmostEqual(decision.confidence_score, 0.91)
+        self.assertEqual(
+            decision.retrieved_context,
+            (
+                "Source: data/knowledge.json\nContent: Original best match",
+                "Source: data/knowledge.json\nContent: Original second match",
+            ),
+        )
+
+    def test_noop_reranker_preserves_existing_behavior(self) -> None:
+        retriever = RecordingRetriever(
+            results=[
+                self._result(text="First result", score=0.88),
+                self._result(text="Second result", score=0.72),
+            ]
+        )
+        pipeline = RetrievalPipeline(
+            retriever=retriever,
+            reranker=NoOpReranker(),
+            final_top_k=2,
+        )
+
+        decision = pipeline.run("When will my refund arrive?")
+
+        self.assertFalse(decision.used_fallback)
+        self.assertEqual(decision.decision_reason, "high_confidence")
+        self.assertAlmostEqual(decision.confidence_score, 0.88)
+        self.assertEqual(
+            decision.retrieved_context,
+            (
+                "Source: data/knowledge.json\nContent: First result",
+                "Source: data/knowledge.json\nContent: Second result",
+            ),
+        )

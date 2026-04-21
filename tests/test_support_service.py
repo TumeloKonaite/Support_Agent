@@ -340,7 +340,7 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
 
         await service.chat(ChatRequest(message="Can you refund this?", session_id="session-6"))
 
-        self.assertEqual(retriever.calls, [("Can you refund this?", None)])
+        self.assertEqual(retriever.calls, [("Can you refund this?", 10)])
         self.assertIn("Retrieved business context:", client.complete_calls[0][1].content)
         self.assertIn(
             "Refund exceptions must be escalated to a human specialist.",
@@ -368,7 +368,7 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         self.assertEqual(chunks, ["stream ", "reply"])
-        self.assertEqual(retriever.calls, [("When are you open?", None)])
+        self.assertEqual(retriever.calls, [("When are you open?", 10)])
         self.assertIn("Retrieved business context:", client.stream_calls[0][1].content)
         self.assertIn("Support hours are weekdays 9 to 5.", client.stream_calls[0][1].content)
 
@@ -442,5 +442,5 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(response.response, "assistant reply")
-        self.assertEqual(retriever.calls, [("How long do refunds take?", None)])
+        self.assertEqual(retriever.calls, [("How long do refunds take?", 10)])
         self.assertNotIn("Retrieved business context:", client.complete_calls[0][1].content)
