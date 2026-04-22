@@ -13,12 +13,17 @@ from src.app.domain.support.models import (
 )
 from src.app.domain.support.observability import log_support_event
 from src.app.domain.support.prompt_builder import SupportPromptBuilder
-from src.app.domain.support.retrieval import SupportRetrieval
+from src.app.domain.support.retrieval import RetrievalDecision, SupportRetrieval
+from src.app.domain.support.router import RouteDecision, RouteType, SupportRouter
 from src.app.infrastructure.llm.openai_client import LLMClient
 from src.app.infrastructure.storage.conversation_store import ConversationStore
 
 logger = logging.getLogger(__name__)
 _CITATION_RE = re.compile(r"\[\d+\]")
+TOOL_PLACEHOLDER_MESSAGE = (
+    "I can help answer questions from our support knowledge, but I cannot perform "
+    "that action yet. Please contact the human support team for help with that request."
+)
 
 
 class SupportService:
@@ -30,12 +35,14 @@ class SupportService:
         openai_client: LLMClient,
         prompt_builder: SupportPromptBuilder,
         retrieval_pipeline: SupportRetrieval,
+        router: SupportRouter,
         guardrail_policy: SupportGuardrailPolicy | None = None,
     ) -> None:
         self._conversation_store = conversation_store
         self._openai_client = openai_client
         self._prompt_builder = prompt_builder
         self._retrieval_pipeline = retrieval_pipeline
+        self._router = router
         self._guardrail_policy = guardrail_policy or SupportGuardrailPolicy()
 
     async def chat(self, request: ChatRequest) -> ChatResponse:
@@ -107,12 +114,13 @@ class SupportService:
         session: ChatSession,
         user_message: str,
     ) -> SupportAnswer:
-        """Resolve retrieval guardrails before the model is invoked."""
+        """Resolve retrieval and routing before the model is invoked."""
         retrieval_decision = self._retrieval_pipeline.run(
             user_message,
             request_id=session.session_id,
         )
-        guardrail_decision = self._guardrail_policy.evaluate(retrieval_decision)
+        route_decision = self._router.decide(user_message, retrieval_decision)
+        answer = self._build_routed_answer(retrieval_decision, route_decision)
         log_support_event(
             logger,
             event="support.request.model_input",
@@ -123,21 +131,40 @@ class SupportService:
                 "retrieval_confidence": retrieval_decision.confidence_score,
                 "retrieval_decision_reason": retrieval_decision.decision_reason,
                 "retrieved_context_count": len(retrieval_decision.retrieved_context),
-                "guardrail_status": guardrail_decision.answer.grounding_status,
-                "guardrail_fallback_reason": guardrail_decision.answer.fallback_reason,
+                "route": route_decision.route.value,
+                "route_reason": route_decision.reason,
+                "guardrail_status": answer.grounding_status,
+                "guardrail_fallback_reason": answer.fallback_reason,
             },
         )
-        if guardrail_decision.should_fallback:
+        if answer.grounding_status == "fallback":
             log_support_event(
                 logger,
                 event="support.guardrails.fallback",
                 payload={
                     "request_id": session.session_id,
-                    "fallback_reason": guardrail_decision.answer.fallback_reason,
+                    "fallback_reason": answer.fallback_reason,
+                    "route": route_decision.route.value,
+                    "route_reason": route_decision.reason,
                     "retrieval_confidence": retrieval_decision.confidence_score,
                     "retrieval_decision_reason": retrieval_decision.decision_reason,
                 },
             )
+        return answer
+
+    def _build_routed_answer(
+        self,
+        retrieval_decision: RetrievalDecision,
+        route_decision: RouteDecision,
+    ) -> SupportAnswer:
+        if route_decision.route is RouteType.TOOL:
+            return SupportAnswer(
+                message=TOOL_PLACEHOLDER_MESSAGE,
+                grounding_status="fallback",
+                fallback_reason="tool_not_supported",
+            )
+
+        guardrail_decision = self._guardrail_policy.evaluate(retrieval_decision)
         return guardrail_decision.answer
 
     def _build_messages(

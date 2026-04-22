@@ -15,7 +15,8 @@ from src.app.domain.support.prompt_builder import (
     SupportPromptBuilder,
 )
 from src.app.domain.support.retrieval import RetrievalPipeline
-from src.app.domain.support.service import SupportService
+from src.app.domain.support.router import RuleBasedSupportRouter
+from src.app.domain.support.service import SupportService, TOOL_PLACEHOLDER_MESSAGE
 from src.app.infrastructure.retrieval.retriever import (
     KnowledgeChunk,
     RetrievedContext,
@@ -142,6 +143,24 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
     ) -> RetrievalPipeline:
         return RetrievalPipeline(retriever=retriever or RecordingRetriever())
 
+    def _build_service(
+        self,
+        *,
+        store: InMemoryConversationStore | None = None,
+        client: RecordingOpenAIClient | None = None,
+        retrieval_pipeline: RetrievalPipeline | None = None,
+    ) -> tuple[SupportService, InMemoryConversationStore, RecordingOpenAIClient]:
+        resolved_store = store or InMemoryConversationStore()
+        resolved_client = client or RecordingOpenAIClient(response="assistant reply")
+        service = SupportService(
+            conversation_store=resolved_store,
+            openai_client=resolved_client,
+            prompt_builder=self._build_prompt_builder(),
+            retrieval_pipeline=retrieval_pipeline or self._build_retrieval_pipeline(),
+            router=RuleBasedSupportRouter(),
+        )
+        return service, resolved_store, resolved_client
+
     async def test_chat_uses_existing_history_and_persists_new_turns(self) -> None:
         store = InMemoryConversationStore(
             {
@@ -157,6 +176,7 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             openai_client=client,
             prompt_builder=self._build_prompt_builder(),
             retrieval_pipeline=self._build_retrieval_pipeline(),
+            router=RuleBasedSupportRouter(),
         )
 
         response = await service.chat(
@@ -183,6 +203,7 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             openai_client=client,
             prompt_builder=self._build_prompt_builder(),
             retrieval_pipeline=self._build_retrieval_pipeline(),
+            router=RuleBasedSupportRouter(),
         )
 
         response = await service.chat(ChatRequest(message="hello", session_id="session-2"))
@@ -205,6 +226,7 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             openai_client=client,
             prompt_builder=self._build_prompt_builder(),
             retrieval_pipeline=self._build_retrieval_pipeline(),
+            router=RuleBasedSupportRouter(),
         )
 
         response = await service.chat(ChatRequest(message="hello"))
@@ -238,6 +260,7 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             openai_client=client,
             prompt_builder=self._build_prompt_builder(),
             retrieval_pipeline=self._build_retrieval_pipeline(),
+            router=RuleBasedSupportRouter(),
         )
 
         chunks = [
@@ -270,6 +293,7 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             openai_client=client,
             prompt_builder=self._build_prompt_builder(),
             retrieval_pipeline=self._build_retrieval_pipeline(),
+            router=RuleBasedSupportRouter(),
         )
 
         chunks = [
@@ -306,6 +330,7 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             openai_client=client,
             prompt_builder=self._build_prompt_builder(),
             retrieval_pipeline=self._build_retrieval_pipeline(),
+            router=RuleBasedSupportRouter(),
         )
 
         chunks = [
@@ -335,13 +360,14 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             openai_client=client,
             prompt_builder=self._build_prompt_builder(),
             retrieval_pipeline=self._build_retrieval_pipeline(retriever),
+            router=RuleBasedSupportRouter(),
         )
 
         response = await service.chat(
-            ChatRequest(message="Can you refund this?", session_id="session-6")
+            ChatRequest(message="What is your refund policy?", session_id="session-6")
         )
 
-        self.assertEqual(retriever.calls, [("Can you refund this?", 10)])
+        self.assertEqual(retriever.calls, [("What is your refund policy?", 10)])
         self.assertIn("Retrieved business context:", client.complete_calls[0][1].content)
         self.assertIn("[1] Source: data/knowledge.json", client.complete_calls[0][1].content)
         self.assertIn(
@@ -364,6 +390,7 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             openai_client=client,
             prompt_builder=self._build_prompt_builder(),
             retrieval_pipeline=self._build_retrieval_pipeline(retriever),
+            router=RuleBasedSupportRouter(),
         )
 
         chunks = [
@@ -388,6 +415,7 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             retrieval_pipeline=self._build_retrieval_pipeline(
                 RecordingRetriever(results=[])
             ),
+            router=RuleBasedSupportRouter(),
         )
 
         response = await service.chat(ChatRequest(message="hello", session_id="session-8"))
@@ -406,6 +434,7 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             retrieval_pipeline=self._build_retrieval_pipeline(
                 RecordingRetriever(error=RuntimeError("retrieval failed"))
             ),
+            router=RuleBasedSupportRouter(),
         )
 
         response = await service.chat(
@@ -444,6 +473,7 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             openai_client=client,
             prompt_builder=self._build_prompt_builder(),
             retrieval_pipeline=self._build_retrieval_pipeline(retriever),
+            router=RuleBasedSupportRouter(),
         )
 
         response = await service.chat(
@@ -453,6 +483,35 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.grounding_status, "fallback")
         self.assertEqual(retriever.calls, [("How long do refunds take?", 10)])
         self.assertEqual(len(client.complete_calls), 0)
+
+    async def test_chat_uses_placeholder_tool_response_for_action_requests(self) -> None:
+        store = InMemoryConversationStore()
+        client = RecordingOpenAIClient(response="assistant reply")
+        service = SupportService(
+            conversation_store=store,
+            openai_client=client,
+            prompt_builder=self._build_prompt_builder(),
+            retrieval_pipeline=self._build_retrieval_pipeline(
+                RecordingRetriever(results=[])
+            ),
+            router=RuleBasedSupportRouter(),
+        )
+
+        response = await service.chat(
+            ChatRequest(
+                message="Cancel my subscription and send me confirmation.",
+                session_id="session-tool",
+            )
+        )
+
+        self.assertEqual(response.response, TOOL_PLACEHOLDER_MESSAGE)
+        self.assertEqual(response.grounding_status, "fallback")
+        self.assertEqual(response.fallback_reason, "tool_not_supported")
+        self.assertEqual(len(client.complete_calls), 0)
+        self.assertEqual(
+            store.data["session-tool"][-1],
+            ConversationTurn(role="assistant", content=TOOL_PLACEHOLDER_MESSAGE),
+        )
 
     async def test_chat_logs_model_input_summary(self) -> None:
         store = InMemoryConversationStore(
@@ -472,11 +531,15 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
             openai_client=client,
             prompt_builder=self._build_prompt_builder(),
             retrieval_pipeline=self._build_retrieval_pipeline(retriever),
+            router=RuleBasedSupportRouter(),
         )
 
         with self.assertLogs("src.app.domain.support.service", level="INFO") as logs:
             await service.chat(
-                ChatRequest(message="Can you refund order 12345?", session_id="session-11")
+                ChatRequest(
+                    message="What is the refund policy for order 12345?",
+                    session_id="session-11",
+                )
             )
 
         event = self._parse_log_record(logs.records[-1].getMessage())
@@ -487,5 +550,7 @@ class SupportServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(event["retrieval_confidence"], 0.9)
         self.assertEqual(event["retrieval_decision_reason"], "high_confidence")
         self.assertEqual(event["retrieved_context_count"], 1)
+        self.assertEqual(event["route"], "rag")
+        self.assertEqual(event["route_reason"], "grounded_retrieval_available")
         self.assertEqual(event["guardrail_status"], "grounded")
         self.assertIsNone(event["guardrail_fallback_reason"])
