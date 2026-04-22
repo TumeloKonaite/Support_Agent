@@ -8,6 +8,7 @@ from src.app.domain.support.prompt_builder import (
 )
 from src.app.domain.support.observability import SupportObservabilitySettings
 from src.app.domain.support.retrieval import RetrievalPipeline
+from src.app.domain.support.router import RuleBasedSupportRouter, SupportRouter
 from src.app.domain.support.service import SupportService
 from src.app.infrastructure.content.business_profile_loader import (
     BusinessProfileLoader,
@@ -104,6 +105,12 @@ def get_support_retrieval_pipeline() -> RetrievalPipeline:
     )
 
 
+@lru_cache
+def get_support_router() -> SupportRouter:
+    """Return the support-domain router."""
+    return RuleBasedSupportRouter()
+
+
 def get_support_service() -> SupportService:
     """Build the support service with its infrastructure dependencies."""
     return SupportService(
@@ -111,4 +118,5 @@ def get_support_service() -> SupportService:
         openai_client=get_openai_client(),
         prompt_builder=get_support_prompt_builder(),
         retrieval_pipeline=get_support_retrieval_pipeline(),
+        router=get_support_router(),
     )
