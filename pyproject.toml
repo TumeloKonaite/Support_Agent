@@ -6,12 +6,16 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi",
+    "gradio>=5.49.1",
     "openai>=2.31.0",
     "pydantic",
     "pydantic-settings",
     "python-dotenv>=1.2.2",
     "pytest>=9.0.3",
     "uvicorn",
+    "python-docx>=1.2.0",
+    "unstructured[docx]>=0.22.26",
+    "chroma>=0.2.0",
 ]
 
 [tool.pytest.ini_options]

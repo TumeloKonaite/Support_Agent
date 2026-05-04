@@ -132,7 +132,7 @@ def load_documents(data_dir: Path) -> list[KnowledgeDocument]:
     for path in sorted(data_dir.rglob("*")):
         if path.is_dir() or not _is_supported(path):
             continue
-        if "conversations" in path.parts:
+        if "conversations" in path.parts or "retrieval" in path.parts:
             continue
         documents.extend(_load_path(path))
     return documents
@@ -144,7 +144,7 @@ def chunk_documents(
 ) -> list[KnowledgeChunk]:
     """Split documents into overlapping chunks with source metadata."""
     chunks: list[KnowledgeChunk] = []
-    for document in documents:
+    for document_number, document in enumerate(documents, start=1):
         for index, chunk_text in enumerate(
             _chunk_text(document.content, config),
             start=1,
@@ -152,9 +152,10 @@ def chunk_documents(
             metadata = dict(document.metadata)
             metadata["source"] = document.source
             metadata["chunk_index"] = str(index)
+            document_id = metadata.get("document_id", str(document_number))
             chunks.append(
                 KnowledgeChunk(
-                    chunk_id=f"{document.source}::chunk-{index}",
+                    chunk_id=f"{document.source}::{document_id}::chunk-{index}",
                     text=chunk_text,
                     metadata=metadata,
                 )
@@ -167,11 +168,18 @@ def _load_path(path: Path) -> list[KnowledgeDocument]:
         payload = json.loads(path.read_text(encoding="utf-8"))
         return _flatten_json(path, payload)
 
+    if path.suffix == ".docx":
+        return _load_docx(path)
+
     return [
         KnowledgeDocument(
             source=path.as_posix(),
             content=path.read_text(encoding="utf-8"),
-            metadata={"file_type": path.suffix.lstrip(".")},
+            metadata={
+                "file_type": path.suffix.lstrip("."),
+                "filename": path.name,
+                "document_id": path.stem,
+            },
         )
     ]
 
@@ -198,12 +206,88 @@ def _flatten_json(path: Path, payload: Any) -> list[KnowledgeDocument]:
                 content=f"{label}: {value}",
                 metadata={
                     "file_type": "json",
+                    "filename": path.name,
                     "path": ".".join(breadcrumb),
+                    "document_id": ".".join(breadcrumb),
                 },
             )
         )
 
     visit(payload, [])
+    return documents
+
+
+def _load_docx(path: Path) -> list[KnowledgeDocument]:
+    documents = _load_docx_elements(path)
+    documents.extend(_load_docx_tables(path))
+    return documents
+
+
+def _load_docx_elements(path: Path) -> list[KnowledgeDocument]:
+    try:
+        from unstructured.partition.docx import partition_docx
+    except ImportError as exc:
+        raise RuntimeError(
+            "DOCX ingestion requires the unstructured package. "
+            "Install project dependencies with `uv sync`."
+        ) from exc
+
+    documents: list[KnowledgeDocument] = []
+    elements = partition_docx(filename=str(path))
+    for index, element in enumerate(elements, start=1):
+        text = str(element).strip()
+        if not text:
+            continue
+
+        category = getattr(element, "category", type(element).__name__)
+        documents.append(
+            KnowledgeDocument(
+                source=path.as_posix(),
+                content=text,
+                metadata={
+                    "file_type": "docx",
+                    "filename": path.name,
+                    "document_id": f"element-{index}",
+                    "docx_block_type": str(category),
+                    "docx_block_index": str(index),
+                },
+            )
+        )
+    return documents
+
+
+def _load_docx_tables(path: Path) -> list[KnowledgeDocument]:
+    try:
+        from docx import Document
+    except ImportError as exc:
+        raise RuntimeError(
+            "DOCX table ingestion requires the python-docx package. "
+            "Install project dependencies with `uv sync`."
+        ) from exc
+
+    documents: list[KnowledgeDocument] = []
+    doc = Document(path)
+    for table_index, table in enumerate(doc.tables, start=1):
+        for row_index, row in enumerate(table.rows, start=1):
+            cells = [_normalize_whitespace(cell.text) for cell in row.cells]
+            cells = [cell for cell in cells if cell]
+            if not cells:
+                continue
+
+            documents.append(
+                KnowledgeDocument(
+                    source=path.as_posix(),
+                    content=f"Table {table_index}, row {row_index}: {' | '.join(cells)}",
+                    metadata={
+                        "file_type": "docx",
+                        "filename": path.name,
+                        "document_id": f"table-{table_index}-row-{row_index}",
+                        "docx_block_type": "TableRow",
+                        "docx_table_index": str(table_index),
+                        "docx_table_row_index": str(row_index),
+                    },
+                )
+            )
     return documents
 
 
@@ -227,11 +311,15 @@ def _chunk_text(text: str, config: ChunkingConfig) -> list[str]:
 
 
 def _is_supported(path: Path) -> bool:
-    return path.suffix in {".json", ".md", ".txt"}
+    return path.suffix in {".docx", ".json", ".md", ".txt"}
 
 
 def _prettify_path_part(value: str) -> str:
     return value.replace("_", " ")
+
+
+def _normalize_whitespace(value: str) -> str:
+    return " ".join(value.split())
 
 
 def main() -> None:

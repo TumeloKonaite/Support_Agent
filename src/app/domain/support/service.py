@@ -115,11 +115,14 @@ class SupportService:
         user_message: str,
     ) -> SupportAnswer:
         """Resolve retrieval and routing before the model is invoked."""
-        retrieval_decision = self._retrieval_pipeline.run(
-            user_message,
-            request_id=session.session_id,
-        )
-        route_decision = self._router.decide(user_message, retrieval_decision)
+        route_decision = self._router.decide(user_message)
+        retrieval_decision = RetrievalDecision(decision_reason="not_requested")
+        if route_decision.route is RouteType.RAG:
+            retrieval_decision = self._retrieval_pipeline.run(
+                user_message,
+                request_id=session.session_id,
+            )
+
         answer = self._build_routed_answer(retrieval_decision, route_decision)
         log_support_event(
             logger,
@@ -162,6 +165,12 @@ class SupportService:
                 message=TOOL_PLACEHOLDER_MESSAGE,
                 grounding_status="fallback",
                 fallback_reason="tool_not_supported",
+            )
+
+        if route_decision.route is RouteType.CONVERSATION:
+            return SupportAnswer(
+                message="",
+                grounding_status="ungrounded",
             )
 
         guardrail_decision = self._guardrail_policy.evaluate(retrieval_decision)

@@ -1,0 +1,34 @@
+[
+  {
+    "role": "user",
+    "content": "Hi"
+  },
+  {
+    "role": "assistant",
+    "content": "Hello! How can I assist you with your beauty support needs today?"
+  },
+  {
+    "role": "user",
+    "content": "What are your operational hours?"
+  },
+  {
+    "role": "assistant",
+    "content": "I don't have enough verified information in our support knowledge to answer that confidently. Please rephrase your question or contact the human support team for help."
+  },
+  {
+    "role": "user",
+    "content": "What is your support hours?"
+  },
+  {
+    "role": "assistant",
+    "content": "I don't have enough verified information in our support knowledge to answer that confidently. Please rephrase your question or contact the human support team for help."
+  },
+  {
+    "role": "user",
+    "content": "What are your numbers?"
+  },
+  {
+    "role": "assistant",
+    "content": "I don't have enough verified information in our support knowledge to answer that confidently. Please rephrase your question or contact the human support team for help."
+  }
+]
