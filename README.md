@@ -2,6 +2,7 @@
 
 [Python](https://www.python.org/)
 [FastAPI](https://fastapi.tiangolo.com/)
+[Gradio](https://www.gradio.app/)
 [OpenAI](https://platform.openai.com/docs)
 [pytest](https://docs.pytest.org/)
 
@@ -14,6 +15,7 @@ The project is in a solid starter state rather than a finished product.
 Implemented today:
 
 - FastAPI app with `GET /`, `GET /health`, `POST /chat`, and `POST /chat/stream`
+- Gradio demo chat UI that calls the existing FastAPI API
 - OpenAI-backed chat and streaming chat responses
 - File-backed conversation history keyed by `session_id`
 - JSON-backed business profile and support knowledge loaders
@@ -63,6 +65,7 @@ Not yet exposed or still intentionally simple:
 - Python 3.12+
 - `uv`
 - `OPENAI_API_KEY` for the chat endpoints
+- `SUPPORT_API_BASE_URL` is optional for the Gradio demo UI and defaults to `http://127.0.0.1:8000`
 
 ## Setup
 
@@ -133,6 +136,34 @@ Streaming chat request:
 curl -N -X POST http://127.0.0.1:8000/chat/stream \
   -H "Content-Type: application/json" \
   -d '{"message": "Can you help me with a refund?", "session_id": "demo-session"}'
+```
+
+## Run The Demo UI
+
+Start the Gradio demo client in a second terminal:
+
+```bash
+uv run python gradio_app.py
+```
+
+Open the demo in your browser:
+
+```text
+http://127.0.0.1:7860
+```
+
+The demo UI:
+
+- sends messages to `POST /chat`
+- lets you provide or reuse a `session_id`
+- shows citations and grounding metadata from the API response
+- highlights fallback metadata when guardrails return a fallback answer
+- includes a "New conversation" button and a debug panel with the raw API payload
+
+If your FastAPI app is running somewhere else, set:
+
+```env
+SUPPORT_API_BASE_URL=http://127.0.0.1:8000
 ```
 
 ## Business Content
@@ -219,13 +250,20 @@ The app does two different things with knowledge:
 
 Supported indexed file types:
 
+- `.docx`
 - `.json`
 - `.md`
 - `.txt`
 
+DOCX ingestion uses `unstructured` to preserve headings and narrative blocks, plus
+`python-docx` to extract table rows and cells as separate retrieval documents.
+Store Word source files under content folders such as `data/policies/` or
+`data/knowledge/`, not under `data/retrieval/`.
+
 Ignored during indexing:
 
 - `data/conversations/`
+- `data/retrieval/`
 
 Build the local retrieval index:
 
@@ -294,6 +332,7 @@ Settings are loaded from environment variables and `.env`.
 | `CONVERSATION_STORAGE_DIR` | `data/conversations` | Directory for saved transcripts |
 | `OPENAI_API_KEY` | unset | Required for chat endpoints |
 | `OPENAI_MODEL` | `gpt-4.1-mini` | OpenAI model used by the LLM client |
+| `SUPPORT_API_BASE_URL` | `http://127.0.0.1:8000` | Base URL used by `gradio_app.py` |
 | `RETRIEVAL_EMBEDDING_PROVIDER` | `hashing` | Retrieval embedding backend |
 | `RETRIEVAL_EMBEDDING_MODEL` | `hashing-v1` | Embedding model name passed to the backend |
 | `RETRIEVAL_TOP_K` | `3` | Number of chunks retrieved per request |
@@ -323,7 +362,10 @@ Settings are loaded from environment variables and `.env`.
 
 ```json
 {
-  "response": "Assistant response text"
+  "response": "Assistant response text",
+  "citations": [],
+  "used_context": false,
+  "grounding_status": "ungrounded"
 }
 ```
 

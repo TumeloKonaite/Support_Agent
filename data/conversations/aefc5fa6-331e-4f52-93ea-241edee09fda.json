@@ -1,0 +1,10 @@
+[
+  {
+    "role": "user",
+    "content": "Hi"
+  },
+  {
+    "role": "assistant",
+    "content": "I don't have enough verified information in our support knowledge to answer that confidently. Please rephrase your question or contact the human support team for help."
+  }
+]

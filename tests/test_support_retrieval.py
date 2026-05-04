@@ -246,10 +246,18 @@ class RetrievalPipelineTests(unittest.TestCase):
         self.assertEqual(
             decision.retrieved_context,
             (
-                self._context_chunk(label="[1]", text="Third match", score=1.0),
-                self._context_chunk(
+                SupportContextChunk(
+                    chunk_id=retriever.results[2].chunk.chunk_id,
+                    label="[1]",
+                    text="Third match",
+                    source="data/knowledge.json",
+                    score=1.0,
+                ),
+                SupportContextChunk(
+                    chunk_id=retriever.results[1].chunk.chunk_id,
                     label="[2]",
                     text="Best match after rerank",
+                    source="data/knowledge.json",
                     score=0.9,
                 ),
             ),

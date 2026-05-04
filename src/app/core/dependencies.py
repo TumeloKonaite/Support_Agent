@@ -1,4 +1,5 @@
 from functools import lru_cache
+import logging
 
 from src.app.core.config import Settings, get_settings
 from src.app.domain.support.prompt_builder import (
@@ -22,6 +23,9 @@ from src.app.infrastructure.storage.conversation_store import ConversationStore
 from src.app.infrastructure.storage.file_conversation_store import (
     FileConversationStore,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 def get_config() -> Settings:
@@ -83,10 +87,31 @@ def get_support_prompt_builder() -> SupportPromptBuilder:
 def get_retriever() -> Retriever:
     """Return the configured retrieval implementation."""
     settings = get_config()
+    vector_store = JsonVectorStore(settings.retrieval_vector_store_path)
+    if vector_store.count() == 0:
+        _build_default_retrieval_index(settings)
+
     return VectorStoreRetriever(
         embedder=build_embedder(settings),
-        vector_store=JsonVectorStore(settings.retrieval_vector_store_path),
+        vector_store=vector_store,
         default_top_k=settings.retrieval_top_k,
+    )
+
+
+def _build_default_retrieval_index(settings: Settings) -> None:
+    """Build the local retrieval index when no persisted vectors are available."""
+    try:
+        from src.app.infrastructure.retrieval.indexer import build_indexer
+
+        chunks = build_indexer(settings).index()
+    except Exception:
+        logger.exception("Unable to auto-build support retrieval index")
+        return
+
+    logger.info(
+        "Auto-built support retrieval index with %s chunks at %s",
+        len(chunks),
+        settings.retrieval_vector_store_path,
     )
 
 
